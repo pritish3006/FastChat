@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
-import { signIn, clearError } from '@/redux/features/authSlice';
+import { login, clearError } from '@/redux/features/authSlice';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { MessageSquare, Mail, Lock, ArrowRight } from 'lucide-react';
@@ -27,7 +26,6 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
-  // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
       navigate('/');
@@ -36,7 +34,7 @@ const Login = () => {
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    dispatch(signIn({ email, password }) as any);
+    dispatch(login({ email, password }) as any);
   };
   
   const containerVariants = {
