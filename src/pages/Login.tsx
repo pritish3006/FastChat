@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
-import { login, clearError } from '@/redux/features/authSlice';
+import { login, clearError, mockLogin } from '@/redux/features/authSlice';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { MessageSquare, Mail, Lock, ArrowRight } from 'lucide-react';
+import { MessageSquare, Mail, Lock, ArrowRight, TerminalSquare } from 'lucide-react';
 import { 
   TextField, 
   Button, 
@@ -13,7 +14,9 @@ import {
   InputAdornment,
   IconButton,
   Snackbar,
-  Alert
+  Alert,
+  Divider,
+  Box
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 
@@ -35,6 +38,10 @@ const Login = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     dispatch(login({ email, password }) as any);
+  };
+
+  const handleMockLogin = () => {
+    dispatch(mockLogin() as any);
   };
   
   const containerVariants = {
@@ -137,6 +144,22 @@ const Login = () => {
                 </Button>
               </div>
             </form>
+
+            <Box sx={{ my: 3 }}>
+              <Divider>
+                <span className="text-xs text-muted-foreground px-2">OR</span>
+              </Divider>
+            </Box>
+
+            <Button
+              variant="outlined"
+              fullWidth
+              onClick={handleMockLogin}
+              className="py-3 border-primary/30 hover:bg-primary/5"
+              startIcon={<TerminalSquare size={18} />}
+            >
+              Development Mode Login
+            </Button>
           </Paper>
         </motion.div>
         

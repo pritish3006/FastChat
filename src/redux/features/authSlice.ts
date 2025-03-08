@@ -75,6 +75,26 @@ export const getSession = createAsyncThunk(
   }
 );
 
+// Mock authentication function for development
+export const mockLogin = createAsyncThunk(
+  'auth/mockLogin',
+  async (_, { rejectWithValue }) => {
+    try {
+      // Create a mock user object
+      const mockUser: User = {
+        id: 'mock-user-id-123',
+        email: 'test@example.com',
+        username: 'TestUser',
+        created_at: new Date().toISOString(),
+      };
+      
+      return mockUser;
+    } catch (error: any) {
+      return rejectWithValue('Mock authentication failed');
+    }
+  }
+);
+
 const authSlice = createSlice({
   name: 'auth',
   initialState,
@@ -141,6 +161,21 @@ const authSlice = createSlice({
       state.isLoading = false;
       state.user = null;
       state.isAuthenticated = false;
+      state.error = action.payload as string;
+    });
+
+    // Mock Login
+    builder.addCase(mockLogin.pending, (state) => {
+      state.isLoading = true;
+      state.error = null;
+    });
+    builder.addCase(mockLogin.fulfilled, (state, action: PayloadAction<User>) => {
+      state.isLoading = false;
+      state.user = action.payload;
+      state.isAuthenticated = true;
+    });
+    builder.addCase(mockLogin.rejected, (state, action) => {
+      state.isLoading = false;
       state.error = action.payload as string;
     });
   },

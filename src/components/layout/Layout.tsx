@@ -4,7 +4,7 @@ import Header from './Header';
 import Sidebar from './Sidebar';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/redux/store';
-import { getSession } from '@/redux/features/authSlice';
+import { getSession, mockLogin } from '@/redux/features/authSlice';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -12,6 +12,9 @@ interface LayoutProps {
   children: React.ReactNode;
   requireAuth?: boolean;
 }
+
+// Set this to true to enable auto mock login in development mode
+const AUTO_MOCK_LOGIN = false;
 
 const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
   const dispatch = useDispatch();
@@ -25,9 +28,14 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
 
   useEffect(() => {
     if (!isLoading && requireAuth && !isAuthenticated) {
-      navigate('/login');
+      if (AUTO_MOCK_LOGIN) {
+        // Auto-login with mock user in development
+        dispatch(mockLogin() as any);
+      } else {
+        navigate('/login');
+      }
     }
-  }, [isAuthenticated, isLoading, navigate, requireAuth]);
+  }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch]);
 
   if (isLoading) {
     return (
