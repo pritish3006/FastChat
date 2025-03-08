@@ -10,9 +10,30 @@ const initialState: AuthState = {
   error: null,
 };
 
-// Async thunks for authentication
-export const signIn = createAsyncThunk(
-  'auth/signIn',
+export const signup = createAsyncThunk(
+  'auth/signup',
+  async ({ email, password, username }: { email: string; password: string; username: string }, { rejectWithValue }) => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username,
+          },
+        },
+      });
+
+      if (error) throw new Error(error.message);
+      return data.user as User;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+export const login = createAsyncThunk(
+  'auth/login',
   async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -20,7 +41,7 @@ export const signIn = createAsyncThunk(
         password,
       });
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
       return data.user as User;
     } catch (error: any) {
       return rejectWithValue(error.message);
@@ -28,42 +49,31 @@ export const signIn = createAsyncThunk(
   }
 );
 
-export const signUp = createAsyncThunk(
-  'auth/signUp',
-  async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
+export const logout = createAsyncThunk(
+  'auth/logout',
+  async (_, { rejectWithValue }) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (error) throw error;
-      return data.user as User;
+      const { error } = await supabase.auth.signOut();
+      if (error) throw new Error(error.message);
+      return null;
     } catch (error: any) {
       return rejectWithValue(error.message);
     }
   }
 );
 
-export const signOut = createAsyncThunk('auth/signOut', async (_, { rejectWithValue }) => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    return null;
-  } catch (error: any) {
-    return rejectWithValue(error.message);
+export const getSession = createAsyncThunk(
+  'auth/getSession',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw new Error(error.message);
+      return data.session?.user as User || null;
+    } catch (error: any) {
+      return rejectWithValue(error.message);
+    }
   }
-});
-
-export const getSession = createAsyncThunk('auth/getSession', async (_, { rejectWithValue }) => {
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    return data.session?.user as User || null;
-  } catch (error: any) {
-    return rejectWithValue(error.message);
-  }
-});
+);
 
 const authSlice = createSlice({
   name: 'auth',
@@ -74,42 +84,47 @@ const authSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // Sign In
-    builder.addCase(signIn.pending, (state) => {
+    // Signup
+    builder.addCase(signup.pending, (state) => {
       state.isLoading = true;
       state.error = null;
     });
-    builder.addCase(signIn.fulfilled, (state, action: PayloadAction<User>) => {
+    builder.addCase(signup.fulfilled, (state, action: PayloadAction<User>) => {
       state.isLoading = false;
-      state.isAuthenticated = true;
       state.user = action.payload;
+      state.isAuthenticated = true;
     });
-    builder.addCase(signIn.rejected, (state, action) => {
+    builder.addCase(signup.rejected, (state, action) => {
       state.isLoading = false;
       state.error = action.payload as string;
     });
 
-    // Sign Up
-    builder.addCase(signUp.pending, (state) => {
+    // Login
+    builder.addCase(login.pending, (state) => {
       state.isLoading = true;
       state.error = null;
     });
-    builder.addCase(signUp.fulfilled, (state, action: PayloadAction<User>) => {
+    builder.addCase(login.fulfilled, (state, action: PayloadAction<User>) => {
       state.isLoading = false;
-      state.isAuthenticated = true;
       state.user = action.payload;
+      state.isAuthenticated = true;
     });
-    builder.addCase(signUp.rejected, (state, action) => {
+    builder.addCase(login.rejected, (state, action) => {
       state.isLoading = false;
       state.error = action.payload as string;
     });
 
-    // Sign Out
-    builder.addCase(signOut.fulfilled, (state) => {
-      state.isAuthenticated = false;
+    // Logout
+    builder.addCase(logout.pending, (state) => {
+      state.isLoading = true;
+    });
+    builder.addCase(logout.fulfilled, (state) => {
+      state.isLoading = false;
       state.user = null;
+      state.isAuthenticated = false;
     });
-    builder.addCase(signOut.rejected, (state, action) => {
+    builder.addCase(logout.rejected, (state, action) => {
+      state.isLoading = false;
       state.error = action.payload as string;
     });
 
@@ -117,13 +132,15 @@ const authSlice = createSlice({
     builder.addCase(getSession.pending, (state) => {
       state.isLoading = true;
     });
-    builder.addCase(getSession.fulfilled, (state, action) => {
+    builder.addCase(getSession.fulfilled, (state, action: PayloadAction<User | null>) => {
       state.isLoading = false;
-      state.isAuthenticated = !!action.payload;
       state.user = action.payload;
+      state.isAuthenticated = !!action.payload;
     });
     builder.addCase(getSession.rejected, (state, action) => {
       state.isLoading = false;
+      state.user = null;
+      state.isAuthenticated = false;
       state.error = action.payload as string;
     });
   },

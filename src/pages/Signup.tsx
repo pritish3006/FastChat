@@ -1,225 +1,139 @@
-
-import React, { useState, useEffect } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { RootState } from '@/redux/store';
-import { signUp, clearError } from '@/redux/features/authSlice';
+import React, { useState } from 'react';
+import { useDispatch } from 'react-redux';
+import { signup } from '@/redux/features/authSlice';
 import { Link, useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { motion } from 'framer-motion';
-import { MessageSquare, Mail, Lock, User, ArrowRight } from 'lucide-react';
-import { 
-  TextField, 
-  Button, 
-  Paper, 
-  CircularProgress, 
-  InputAdornment,
-  IconButton,
-  Snackbar,
-  Alert
-} from '@mui/material';
-import { Visibility, VisibilityOff } from '@mui/icons-material';
+
+const signupSchema = z.object({
+  email: z.string().email({ message: 'Please enter a valid email address' }),
+  password: z.string().min(8, { message: 'Password must be at least 8 characters' }),
+  username: z.string().min(3, { message: 'Username must be at least 3 characters' }),
+});
+
+type SignupFormValues = z.infer<typeof signupSchema>;
 
 const Signup = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading, error } = useSelector((state: RootState) => state.auth);
-  
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [passwordError, setPasswordError] = useState('');
-  
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (isAuthenticated) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const form = useForm<SignupFormValues>({
+    resolver: zodResolver(signupSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+      username: '',
+    },
+  });
+
+  const onSubmit = async (data: SignupFormValues) => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Update this to include the username in the signup process
+      await dispatch(signup({ 
+        email: data.email, 
+        password: data.password, 
+        username: data.username 
+      }) as any);
       navigate('/');
-    }
-  }, [isAuthenticated, navigate]);
-  
-  const validatePasswords = () => {
-    if (password !== confirmPassword) {
-      setPasswordError('Passwords do not match');
-      return false;
-    }
-    if (password.length < 8) {
-      setPasswordError('Password must be at least 8 characters');
-      return false;
-    }
-    setPasswordError('');
-    return true;
-  };
-  
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (validatePasswords()) {
-      dispatch(signUp({ email, password, username }) as any);
-    }
-  };
-  
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.1,
-        delayChildren: 0.2
-      }
-    }
-  };
-  
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1.0] }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during signup');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-      <motion.div
-        className="w-full max-w-md"
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <motion.div 
-          className="text-center mb-8"
-          variants={itemVariants}
-        >
-          <div className="bg-primary/10 p-3 rounded-full inline-flex mb-4">
-            <MessageSquare size={32} className="text-primary" />
-          </div>
-          <h1 className="text-3xl font-bold">Create an account</h1>
-          <p className="text-muted-foreground mt-2">Sign up to start chatting with AI</p>
-        </motion.div>
-        
-        <motion.div variants={itemVariants}>
-          <Paper 
-            elevation={0} 
-            className="p-6 border rounded-lg"
-          >
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <TextField
-                  label="Username"
-                  type="text"
-                  fullWidth
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <User size={18} />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-                
-                <TextField
-                  label="Email"
-                  type="email"
-                  fullWidth
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Mail size={18} />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-                
-                <TextField
-                  label="Password"
-                  type={showPassword ? 'text' : 'password'}
-                  fullWidth
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Lock size={18} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowPassword(!showPassword)}
-                          edge="end"
-                        >
-                          {showPassword ? <VisibilityOff /> : <Visibility />}
-                        </IconButton>
-                      </InputAdornment>
-                    )
-                  }}
-                />
-                
-                <TextField
-                  label="Confirm Password"
-                  type={showPassword ? 'text' : 'password'}
-                  fullWidth
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  error={!!passwordError}
-                  helperText={passwordError}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Lock size={18} />
-                      </InputAdornment>
-                    )
-                  }}
-                />
-                
-                <Button
-                  type="submit"
-                  variant="contained"
-                  fullWidth
-                  disabled={isLoading}
-                  className="bg-primary hover:bg-primary/90 py-3"
-                  endIcon={isLoading ? <CircularProgress size={16} color="inherit" /> : <ArrowRight />}
-                >
-                  {isLoading ? 'Signing up...' : 'Sign up'}
-                </Button>
-              </div>
+    <motion.div
+      className="container grid h-screen place-items-center"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <Card className="w-[400px]">
+        <CardHeader>
+          <CardTitle>Create an account</CardTitle>
+          <CardDescription>Enter your email, password, and username to register.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input placeholder="mail@example.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Username</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter a username" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Password</FormLabel>
+                    <FormControl>
+                      <Input type="password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" disabled={isLoading} className="w-full">
+                {isLoading ? (
+                  <>
+                    Signing up...
+                  </>
+                ) : (
+                  'Sign up'
+                )}
+              </Button>
             </form>
-          </Paper>
-        </motion.div>
-        
-        <motion.div 
-          className="text-center mt-6"
-          variants={itemVariants}
-        >
-          <p className="text-muted-foreground">
+          </Form>
+          {error && (
+            <div className="mt-4 text-sm text-red-500">
+              {error}
+            </div>
+          )}
+        </CardContent>
+        <CardFooter className="flex justify-center">
+          <p className="text-sm text-muted-foreground">
             Already have an account?{' '}
-            <Link to="/login" className="text-primary hover:underline font-medium">
-              Sign in
+            <Link to="/login" className="text-primary hover:underline">
+              Log in
             </Link>
           </p>
-        </motion.div>
-      </motion.div>
-      
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={() => dispatch(clearError())}
-      >
-        <Alert 
-          onClose={() => dispatch(clearError())} 
-          severity="error"
-        >
-          {error}
-        </Alert>
-      </Snackbar>
-    </div>
+        </CardFooter>
+      </Card>
+    </motion.div>
   );
 };
 
