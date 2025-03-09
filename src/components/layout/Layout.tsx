@@ -20,23 +20,40 @@ const AUTO_MOCK_LOGIN = false;
 const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isLoading, user } = useSelector((state: RootState) => state.auth);
   const { isSidebarOpen } = useSelector((state: RootState) => state.chat);
 
   // Check for existing session on component mount
   useEffect(() => {
+    console.log('Layout mounting, checking session');
     dispatch(getSession() as any);
   }, [dispatch]);
 
   // Handle authentication requirements and redirects
   useEffect(() => {
-    if (!isLoading && requireAuth && !isAuthenticated) {
-      if (AUTO_MOCK_LOGIN) {
-        // Auto-login with mock user in development
-        dispatch(mockLogin() as any);
-      } else {
-        // If not authenticated and we require auth, redirect to login
-        navigate('/login');
+    console.log('Auth state changed in Layout:', { 
+      isAuthenticated, 
+      isLoading, 
+      requireAuth,
+      user
+    });
+
+    // Only redirect when loading is complete
+    if (!isLoading) {
+      if (requireAuth && !isAuthenticated) {
+        if (AUTO_MOCK_LOGIN) {
+          // Auto-login with mock user in development
+          console.log('Auto mock login triggered');
+          dispatch(mockLogin() as any);
+        } else {
+          // If not authenticated and we require auth, redirect to login
+          console.log('Redirecting to login from Layout');
+          navigate('/login');
+        }
+      } else if (!requireAuth && isAuthenticated) {
+        // If authenticated and on a non-auth required page (like login), redirect to home
+        console.log('Authenticated user on non-auth page, redirecting to home');
+        navigate('/');
       }
     }
   }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch]);

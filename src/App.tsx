@@ -12,6 +12,7 @@ import Chat from "./pages/Chat";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
+import Layout from "./components/layout/Layout";
 
 // Create MUI theme to match our Tailwind design
 const theme = createTheme({
@@ -67,8 +68,8 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/chat" element={<Chat />} />
+              <Route path="/" element={<Layout><Index /></Layout>} />
+              <Route path="/chat" element={<Layout><Chat /></Layout>} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="*" element={<NotFound />} />

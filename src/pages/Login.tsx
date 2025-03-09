@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
@@ -29,10 +30,15 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   
   useEffect(() => {
-    if (isAuthenticated) {
+    // Add logging to help debug the authentication state changes
+    console.log('Auth state changed in Login component:', { isAuthenticated, isLoading });
+    
+    // Only navigate if authenticated and not loading
+    if (isAuthenticated && !isLoading) {
+      console.log('Redirecting to home from Login component');
       navigate('/');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, isLoading, navigate]);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +46,7 @@ const Login = () => {
   };
 
   const handleMockLogin = () => {
+    console.log('Mock login button clicked');
     dispatch(mockLogin() as any);
   };
   
