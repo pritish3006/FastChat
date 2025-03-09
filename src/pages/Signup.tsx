@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { useDispatch } from 'react-redux';
-import { signup } from '@/redux/features/authSlice';
+import { setUser } from '@/redux/features/authSlice';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { motion } from 'framer-motion';
+import { createMockUser } from '@/utils/authHelpers';
 
 const signupSchema = z.object({
   email: z.string().email({ message: 'Please enter a valid email address' }),
@@ -39,12 +41,19 @@ const Signup = () => {
     setError(null);
     
     try {
-      // Update this to include the username in the signup process
-      await dispatch(signup({ 
-        email: data.email, 
-        password: data.password, 
-        username: data.username 
-      }) as any);
+      // Simplified mock signup for development
+      console.log('Signup attempted with:', data);
+      
+      // Create a mock user based on the form data
+      const mockUser = {
+        id: `mock-user-${Date.now()}`,
+        email: data.email,
+        username: data.username,
+        created_at: new Date().toISOString(),
+      };
+      
+      // Set the user in the Redux store
+      dispatch(setUser(mockUser));
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'An error occurred during signup');

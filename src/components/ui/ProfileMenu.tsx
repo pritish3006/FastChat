@@ -1,7 +1,6 @@
 
 import React from 'react';
 import { useDispatch } from 'react-redux';
-import { logout } from '@/redux/features/authSlice';
 import { setProfileMenuOpen } from '@/redux/features/uiSlice';
 import { motion } from 'framer-motion';
 import { 
@@ -13,7 +12,8 @@ const ProfileMenu: React.FC = () => {
   const dispatch = useDispatch();
 
   const handleSignOut = () => {
-    dispatch(logout() as any);
+    // Sign out functionality removed temporarily
+    console.log('Sign out clicked - functionality removed');
   };
 
   const handleClickOutside = (e: React.MouseEvent<HTMLDivElement>) => {

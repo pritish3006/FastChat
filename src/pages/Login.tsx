@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
-import { login, clearError, mockLogin } from '@/redux/features/authSlice';
+import { clearError, setUser } from '@/redux/features/authSlice';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { MessageSquare, Mail, Lock, ArrowRight, TerminalSquare } from 'lucide-react';
@@ -20,6 +20,7 @@ import {
   Typography
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { createMockUser } from '@/utils/authHelpers';
 
 /**
  * Login Page Component
@@ -33,7 +34,7 @@ import { Visibility, VisibilityOff } from '@mui/icons-material';
 const Login = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading, error, isDevMode } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isLoading, error } = useSelector((state: RootState) => state.auth);
   
   // Form state
   const [email, setEmail] = useState('');
@@ -48,8 +49,7 @@ const Login = () => {
     // Add logging to help debug the authentication state changes
     console.log('Auth state changed in Login component:', { 
       isAuthenticated, 
-      isLoading,
-      isDevMode
+      isLoading
     });
     
     // Only navigate if authenticated and not loading
@@ -60,7 +60,7 @@ const Login = () => {
         navigate('/', { replace: true });
       }, 100);
     }
-  }, [isAuthenticated, isLoading, navigate, isDevMode]);
+  }, [isAuthenticated, isLoading, navigate]);
   
   /**
    * Handles form submission for email/password login
@@ -68,7 +68,8 @@ const Login = () => {
    */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    dispatch(login({ email, password }) as any);
+    console.log('Login attempted with:', { email, password });
+    // Authentication functionality removed temporarily
   };
 
   /**
@@ -78,8 +79,9 @@ const Login = () => {
   const handleDevModeLogin = () => {
     console.log('Dev mode login button clicked');
     
-    // Dispatch mock login action
-    dispatch(mockLogin() as any);
+    // Create a mock user and set it in the state
+    const mockUser = createMockUser();
+    dispatch(setUser(mockUser));
     
     // We'll manually navigate after a short delay to ensure the state is updated
     setTimeout(() => {
@@ -208,7 +210,7 @@ const Login = () => {
 
             {process.env.NODE_ENV === 'development' && (
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
-                Bypasses Supabase authentication for faster development
+                Bypasses authentication for faster development
               </Typography>
             )}
           </Paper>
