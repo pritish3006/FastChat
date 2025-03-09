@@ -14,6 +14,7 @@ interface LayoutProps {
 }
 
 // Set this to true to enable auto mock login in development mode
+// This is being set to false since we're using the button in Login page instead
 const AUTO_MOCK_LOGIN = false;
 
 const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
@@ -22,21 +23,25 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
   const { isAuthenticated, isLoading } = useSelector((state: RootState) => state.auth);
   const { isSidebarOpen } = useSelector((state: RootState) => state.chat);
 
+  // Check for existing session on component mount
   useEffect(() => {
     dispatch(getSession() as any);
   }, [dispatch]);
 
+  // Handle authentication requirements and redirects
   useEffect(() => {
     if (!isLoading && requireAuth && !isAuthenticated) {
       if (AUTO_MOCK_LOGIN) {
         // Auto-login with mock user in development
         dispatch(mockLogin() as any);
       } else {
+        // If not authenticated and we require auth, redirect to login
         navigate('/login');
       }
     }
   }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch]);
 
+  // Show loading state
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -47,10 +52,12 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
     );
   }
 
+  // If auth is required but not authenticated, return null (will be redirected by useEffect)
   if (requireAuth && !isAuthenticated) {
-    return null; // Will navigate to login
+    return null;
   }
 
+  // Render the layout with sidebar and main content
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AnimatePresence>

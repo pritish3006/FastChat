@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
@@ -157,8 +156,9 @@ const Login = () => {
               onClick={handleMockLogin}
               className="py-3 border-primary/30 hover:bg-primary/5"
               startIcon={<TerminalSquare size={18} />}
+              disabled={isLoading}
             >
-              Development Mode Login
+              {isLoading ? 'Signing in...' : 'Development Mode Login'}
             </Button>
           </Paper>
         </motion.div>

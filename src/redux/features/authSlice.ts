@@ -80,6 +80,7 @@ export const mockLogin = createAsyncThunk(
   'auth/mockLogin',
   async (_, { rejectWithValue }) => {
     try {
+      console.log('Mock login initiated');
       // Create a mock user object
       const mockUser: User = {
         id: 'mock-user-id-123',
@@ -88,8 +89,10 @@ export const mockLogin = createAsyncThunk(
         created_at: new Date().toISOString(),
       };
       
+      console.log('Mock user created:', mockUser);
       return mockUser;
     } catch (error: any) {
+      console.error('Mock login failed:', error);
       return rejectWithValue('Mock authentication failed');
     }
   }
@@ -168,15 +171,18 @@ const authSlice = createSlice({
     builder.addCase(mockLogin.pending, (state) => {
       state.isLoading = true;
       state.error = null;
+      console.log('Mock login pending');
     });
     builder.addCase(mockLogin.fulfilled, (state, action: PayloadAction<User>) => {
       state.isLoading = false;
       state.user = action.payload;
       state.isAuthenticated = true;
+      console.log('Mock login fulfilled, user authenticated:', state.isAuthenticated);
     });
     builder.addCase(mockLogin.rejected, (state, action) => {
       state.isLoading = false;
       state.error = action.payload as string;
+      console.error('Mock login rejected:', action.payload);
     });
   },
 });
