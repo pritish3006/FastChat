@@ -9,14 +9,8 @@ import { store } from "./redux/store";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import Index from "./pages/Index";
 import Chat from "./pages/Chat";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
 import Layout from "./components/layout/Layout";
-import { useSelector } from "react-redux";
-import { RootState } from "./redux/store";
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 
 /**
  * Create MUI theme to match our Tailwind design
@@ -75,84 +69,13 @@ const queryClient = new QueryClient({
 });
 
 /**
- * ProtectedRoute component
- * 
- * Ensures routes are only accessible when authenticated
- * Supports both regular authentication and development mode
- * Redirects to login when not authenticated
- * 
- * @param {object} props - Component props
- * @param {React.ReactNode} props.children - Child components to render when authenticated
- * @returns {React.ReactElement} The protected route component
- */
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isLoading, isDevMode } = useSelector((state: RootState) => state.auth);
-  const navigate = useNavigate();
-  
-  useEffect(() => {
-    console.log('ProtectedRoute auth state:', { isAuthenticated, isLoading, isDevMode });
-    
-    if (!isLoading && !isAuthenticated) {
-      console.log('Not authenticated, redirecting to login from ProtectedRoute');
-      navigate('/login', { replace: true });
-    }
-  }, [isAuthenticated, isLoading, navigate, isDevMode]);
-  
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse-slow">
-          <p className="text-lg font-medium text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-  
-  if (!isAuthenticated) {
-    return null;
-  }
-  
-  return <Layout>{children}</Layout>;
-};
-
-/**
- * PublicRoute component
- * 
- * For routes that don't require authentication
- * Redirects to home when already authenticated
- * 
- * @param {object} props - Component props
- * @param {React.ReactNode} props.children - Child components to render for public routes
- * @returns {React.ReactElement} The public route component
- */
-const PublicRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isDevMode } = useSelector((state: RootState) => state.auth);
-  const navigate = useNavigate();
-  
-  useEffect(() => {
-    console.log('PublicRoute auth state:', { isAuthenticated, isDevMode });
-    
-    if (isAuthenticated) {
-      console.log('Already authenticated, redirecting to home from PublicRoute');
-      navigate('/', { replace: true });
-    }
-  }, [isAuthenticated, navigate, isDevMode]);
-  
-  if (isAuthenticated) {
-    return null;
-  }
-  
-  return <>{children}</>;
-};
-
-/**
  * Main App component
  * 
  * Sets up the application with:
  * - Redux store for state management
  * - Material UI theme
  * - React Query for data fetching
- * - Routing configuration with auth-aware routes
+ * - Routing configuration
  */
 const AppWithProviders = () => (
   <Provider store={store}>
@@ -163,38 +86,8 @@ const AppWithProviders = () => (
           <Sonner />
           <BrowserRouter>
             <Routes>
-              <Route 
-                path="/" 
-                element={
-                  <ProtectedRoute>
-                    <Index />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/chat" 
-                element={
-                  <ProtectedRoute>
-                    <Chat />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/login" 
-                element={
-                  <PublicRoute>
-                    <Login />
-                  </PublicRoute>
-                } 
-              />
-              <Route 
-                path="/signup" 
-                element={
-                  <PublicRoute>
-                    <Signup />
-                  </PublicRoute>
-                } 
-              />
+              <Route path="/" element={<Layout><Index /></Layout>} />
+              <Route path="/chat" element={<Layout><Chat /></Layout>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

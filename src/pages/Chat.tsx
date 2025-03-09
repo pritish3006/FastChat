@@ -3,7 +3,6 @@ import React, { useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/redux/store';
 import { createNewSession } from '@/redux/features/chatSlice';
-import Layout from '@/components/layout/Layout';
 import ChatContainer from '@/components/chat/ChatContainer';
 
 const Chat = () => {
@@ -17,11 +16,7 @@ const Chat = () => {
     }
   }, [dispatch, sessions, currentSessionId]);
 
-  return (
-    <Layout>
-      <ChatContainer />
-    </Layout>
-  );
+  return <ChatContainer />;
 };
 
 export default Chat;

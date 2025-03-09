@@ -1,3 +1,4 @@
+
 // User types
 export interface User {
   id: string;
@@ -7,13 +8,12 @@ export interface User {
   created_at: string;
 }
 
-// Auth types
+// Auth state types (simplified)
 export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  isDevMode?: boolean;
 }
 
 // Model types
