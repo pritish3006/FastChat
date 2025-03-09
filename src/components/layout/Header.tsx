@@ -7,19 +7,14 @@ import { toggleProfileMenu } from '@/redux/features/uiSlice';
 import ModelSelector from '../chat/ModelSelector';
 import ProfileMenu from '../ui/ProfileMenu';
 import { motion } from 'framer-motion';
-import { Menu, PlusCircle } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Avatar } from '@mui/material';
-import { createNewSession } from '@/redux/features/chatSlice';
 
 const Header: React.FC = () => {
   const dispatch = useDispatch();
   const { isSidebarOpen } = useSelector((state: RootState) => state.chat);
   const { user } = useSelector((state: RootState) => state.auth);
   const { isProfileMenuOpen } = useSelector((state: RootState) => state.ui);
-
-  const handleNewChat = () => {
-    dispatch(createNewSession());
-  };
 
   const headerVariants = {
     hidden: { opacity: 0, y: -20 },
@@ -35,7 +30,7 @@ const Header: React.FC = () => {
 
   return (
     <motion.header 
-      className="sticky top-0 z-30 w-full px-4 py-3 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/50"
+      className="sticky top-0 z-30 w-full px-4 py-3 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/50"
       initial="hidden"
       animate="visible"
       variants={headerVariants}
@@ -49,16 +44,6 @@ const Header: React.FC = () => {
           >
             <Menu size={22} />
           </button>
-          
-          {!isSidebarOpen && (
-            <button
-              onClick={handleNewChat}
-              className="p-2 rounded-full hover:bg-muted transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-              aria-label="New chat"
-            >
-              <PlusCircle size={22} />
-            </button>
-          )}
           
           <ModelSelector />
         </div>

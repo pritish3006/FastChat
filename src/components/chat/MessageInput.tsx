@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
@@ -19,7 +18,6 @@ const MessageInput: React.FC = () => {
   const { isGenerating, currentModelId } = useSelector((state: RootState) => state.chat);
   const { isToolsMenuOpen } = useSelector((state: RootState) => state.ui);
 
-  // Adjust textarea height based on content
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -38,7 +36,6 @@ const MessageInput: React.FC = () => {
     
     setMessage('');
     
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -50,25 +47,19 @@ const MessageInput: React.FC = () => {
 
   const handleMicToggle = () => {
     if (!isListening) {
-      // Start speech recognition
       setIsListening(true);
       
-      // Placeholder for speech recognition API
-      // In a real implementation, we would use the Web Speech API
-      
       setTimeout(() => {
-        // Simulated speech recognition result
         setMessage(prev => prev + " Voice input would go here");
         setIsListening(false);
       }, 2000);
     } else {
-      // Stop speech recognition
       setIsListening(false);
     }
   };
 
   return (
-    <div className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/50 p-4">
+    <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/50 p-4">
       <div className="max-w-4xl mx-auto relative">
         <Paper 
           elevation={0} 
