@@ -1,4 +1,3 @@
-
 import { io, Socket } from 'socket.io-client';
 import { store } from '../redux/store';
 import { addMessage, setStreamingFlag, setIsGenerating } from '../redux/features/chatSlice';
@@ -9,9 +8,17 @@ class WebSocketManager {
   private messageQueue: { id: string; content: string }[] = [];
   private activeMessageId: string | null = null;
   private streamingInterval: NodeJS.Timeout | null = null;
+  private isConnected: boolean = false;
+  private mockMode: boolean = true; // Enable mock mode for demo
 
   // Establish WebSocket connection
   connect(url: string): void {
+    if (this.mockMode) {
+      console.log('WebSocket in mock mode');
+      this.isConnected = true;
+      return;
+    }
+
     this.socket = io(url, {
       transports: ['websocket'],
       withCredentials: true,
@@ -26,10 +33,12 @@ class WebSocketManager {
 
     this.socket.on('connect', () => {
       console.log('WebSocket connected');
+      this.isConnected = true;
     });
 
     this.socket.on('disconnect', () => {
       console.log('WebSocket disconnected');
+      this.isConnected = false;
     });
 
     this.socket.on('error', (error) => {
@@ -126,13 +135,49 @@ class WebSocketManager {
     }
   }
 
+  private mockResponse(content: string): void {
+    setTimeout(() => {
+      const messageId = uuidv4();
+      
+      store.dispatch(
+        addMessage({
+          content: this.generateMockResponse(content),
+          role: 'assistant',
+          chat_id: store.getState().chat.currentSessionId || '',
+          is_streaming: true,
+        })
+      );
+      
+      store.dispatch(setStreamingFlag({ id: messageId, isStreaming: true }));
+      
+      // Simulate streaming completion
+      setTimeout(() => {
+        store.dispatch(setStreamingFlag({ id: messageId, isStreaming: false }));
+        store.dispatch(setIsGenerating(false));
+      }, 500);
+      
+    }, 800);
+  }
+
+  private generateMockResponse(content: string): string {
+    // Simple response generator based on user input keywords
+    const lowerContent = content.toLowerCase();
+    
+    if (lowerContent.includes('hello') || lowerContent.includes('hi')) {
+      return "Hello! How can I assist you today?";
+    } else if (lowerContent.includes('help')) {
+      return "I'm here to help! What specific assistance do you need?";
+    } else if (lowerContent.includes('code') || lowerContent.includes('function')) {
+      return "Here's a simple JavaScript function:\n\n```javascript\nfunction example() {\n  console.log('Hello, world!');\n}\n```\n\nIs this what you were looking for?";
+    } else if (lowerContent.includes('weather')) {
+      return "I don't have real-time weather data, but I can suggest checking a weather app or website for the most current information.";
+    } else {
+      return "Thank you for your message. Is there anything specific you'd like to know more about?";
+    }
+  }
+
   // Send a message to the websocket server
   sendMessage(content: string, modelId: string): string {
-    if (!this.socket) {
-      console.error('WebSocket not connected');
-      return '';
-    }
-
     // Set generating state
     store.dispatch(setIsGenerating(true));
 
@@ -148,6 +193,18 @@ class WebSocketManager {
       })
     );
 
+    if (this.mockMode) {
+      // Use mock response in demo mode
+      this.mockResponse(content);
+      return messageId;
+    }
+
+    if (!this.socket || !this.isConnected) {
+      console.error('WebSocket not connected, but still adding message to UI');
+      store.dispatch(setIsGenerating(false));
+      return messageId;
+    }
+
     // Send message to server
     this.socket.emit('send-message', {
       id: messageId,
@@ -160,6 +217,11 @@ class WebSocketManager {
 
   // Stop message generation
   stopGeneration(): void {
+    if (this.mockMode) {
+      store.dispatch(setIsGenerating(false));
+      return;
+    }
+
     if (!this.socket || !this.activeMessageId) return;
 
     this.socket.emit('stop-generation', {
@@ -180,6 +242,7 @@ class WebSocketManager {
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
+      this.isConnected = false;
     }
 
     this.stopStreaming();

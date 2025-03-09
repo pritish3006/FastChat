@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '@/redux/store';
@@ -6,8 +7,8 @@ import { addMessage, setIsGenerating } from '@/redux/features/chatSlice';
 import ToolsMenu from '../ui/ToolsMenu';
 import webSocketManager from '@/utils/webSocket';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Mic, PlusCircle, StopCircle, Loader2 } from 'lucide-react';
-import { TextField, IconButton, Tooltip, Paper } from '@mui/material';
+import { Send, Mic, PlusCircle, StopCircle, Upload, Search, Code } from 'lucide-react';
+import { TextField, IconButton, Tooltip, Paper, Button } from '@mui/material';
 
 const MessageInput: React.FC = () => {
   const dispatch = useDispatch();
@@ -29,8 +30,6 @@ const MessageInput: React.FC = () => {
     e?.preventDefault();
     
     if (!message.trim() || isGenerating) return;
-    
-    if (!webSocketManager) return;
     
     webSocketManager.sendMessage(message.trim(), currentModelId || 'gpt-4');
     
@@ -166,16 +165,31 @@ const MessageInput: React.FC = () => {
           <ToolsMenu />
         )}
         
-        <div className="flex justify-center mt-2 space-x-2">
-          <span className="text-xs text-muted-foreground">
+        <div className="flex justify-start mt-2 space-x-3 px-2">
+          <Button 
+            startIcon={<Upload size={16} />} 
+            size="small" 
+            variant="text" 
+            className="text-xs text-muted-foreground"
+          >
             File upload
-          </span>
-          <span className="text-xs text-muted-foreground">
+          </Button>
+          <Button 
+            startIcon={<Search size={16} />} 
+            size="small" 
+            variant="text" 
+            className="text-xs text-muted-foreground"
+          >
             Web search
-          </span>
-          <span className="text-xs text-muted-foreground">
+          </Button>
+          <Button 
+            startIcon={<Code size={16} />} 
+            size="small" 
+            variant="text" 
+            className="text-xs text-muted-foreground"
+          >
             Code interpreter
-          </span>
+          </Button>
         </div>
       </div>
     </div>

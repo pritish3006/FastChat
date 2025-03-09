@@ -4,11 +4,22 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/redux/store';
 import { createNewSession, addMessage } from '@/redux/features/chatSlice';
 import ChatContainer from '@/components/chat/ChatContainer';
+import webSocketManager from '@/utils/webSocket';
 import { v4 as uuidv4 } from 'uuid';
 
 const Chat = () => {
   const dispatch = useDispatch();
   const { sessions, currentSessionId } = useSelector((state: RootState) => state.chat);
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    // Initialize with mock server URL - it will run in mock mode
+    webSocketManager.connect('https://mock-api.example.com');
+    
+    return () => {
+      webSocketManager.disconnect();
+    };
+  }, []);
 
   // Create a new session and add mock messages if needed
   useEffect(() => {
