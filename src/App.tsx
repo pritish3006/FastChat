@@ -15,6 +15,8 @@ import NotFound from "./pages/NotFound";
 import Layout from "./components/layout/Layout";
 import { useSelector } from "react-redux";
 import { RootState } from "./redux/store";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 /**
  * Create MUI theme to match our Tailwind design
@@ -76,10 +78,25 @@ const queryClient = new QueryClient({
  * ProtectedRoute component
  * 
  * Ensures routes are only accessible when authenticated
+ * Supports both regular authentication and development mode
  * Redirects to login when not authenticated
+ * 
+ * @param {object} props - Component props
+ * @param {React.ReactNode} props.children - Child components to render when authenticated
+ * @returns {React.ReactElement} The protected route component
  */
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isLoading } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isLoading, isDevMode } = useSelector((state: RootState) => state.auth);
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    console.log('ProtectedRoute auth state:', { isAuthenticated, isLoading, isDevMode });
+    
+    if (!isLoading && !isAuthenticated) {
+      console.log('Not authenticated, redirecting to login from ProtectedRoute');
+      navigate('/login', { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate, isDevMode]);
   
   if (isLoading) {
     return (
@@ -92,7 +109,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
   
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return null;
   }
   
   return <Layout>{children}</Layout>;
@@ -103,12 +120,26 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
  * 
  * For routes that don't require authentication
  * Redirects to home when already authenticated
+ * 
+ * @param {object} props - Component props
+ * @param {React.ReactNode} props.children - Child components to render for public routes
+ * @returns {React.ReactElement} The public route component
  */
 const PublicRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isDevMode } = useSelector((state: RootState) => state.auth);
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    console.log('PublicRoute auth state:', { isAuthenticated, isDevMode });
+    
+    if (isAuthenticated) {
+      console.log('Already authenticated, redirecting to home from PublicRoute');
+      navigate('/', { replace: true });
+    }
+  }, [isAuthenticated, navigate, isDevMode]);
   
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return null;
   }
   
   return <>{children}</>;
@@ -121,7 +152,7 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
  * - Redux store for state management
  * - Material UI theme
  * - React Query for data fetching
- * - Routing configuration
+ * - Routing configuration with auth-aware routes
  */
 const AppWithProviders = () => (
   <Provider store={store}>
@@ -176,6 +207,8 @@ const AppWithProviders = () => (
 /**
  * App component wrapper
  * Separates provider setup from main component for cleaner organization
+ * 
+ * @returns {React.ReactElement} The root App component
  */
 const App = () => <AppWithProviders />;
 

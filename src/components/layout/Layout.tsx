@@ -4,7 +4,7 @@ import Header from './Header';
 import Sidebar from './Sidebar';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/redux/store';
-import { getSession, mockLogin } from '@/redux/features/authSlice';
+import { getSession, checkDevMode } from '@/redux/features/authSlice';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -18,10 +18,6 @@ interface LayoutProps {
   requireAuth?: boolean;
 }
 
-// Set this to false to disable auto mock login in development mode
-// Users can still use the mock login button on the login page
-const AUTO_MOCK_LOGIN = false;
-
 /**
  * Main layout component
  * 
@@ -29,6 +25,7 @@ const AUTO_MOCK_LOGIN = false;
  * - Authentication checks and redirects
  * - Layout structure (header, sidebar, main content)
  * - Authentication-based access control
+ * - Development mode detection
  * 
  * @param {LayoutProps} props - Component props
  * @returns {React.ReactElement} The rendered layout
@@ -37,13 +34,20 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, isLoading, user } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isLoading, user, isDevMode } = useSelector((state: RootState) => state.auth);
   const { isSidebarOpen } = useSelector((state: RootState) => state.chat);
 
-  // Check for existing session on component mount
+  // Check for existing session or dev mode on component mount
   useEffect(() => {
-    console.log('Layout mounting, checking session');
-    dispatch(getSession() as any);
+    console.log('Layout mounting, checking session or dev mode');
+    
+    // First check if dev mode is enabled in localStorage
+    dispatch(checkDevMode() as any);
+    
+    // Only check for a real session if not in dev mode
+    if (!isDevMode) {
+      dispatch(getSession() as any);
+    }
   }, [dispatch]);
 
   // Handle authentication requirements and redirects
@@ -52,6 +56,7 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
       isAuthenticated, 
       isLoading, 
       requireAuth,
+      isDevMode,
       user,
       currentPath: location.pathname
     });
@@ -59,17 +64,11 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
     // Only handle redirects when loading is complete
     if (!isLoading) {
       if (requireAuth && !isAuthenticated) {
-        if (AUTO_MOCK_LOGIN) {
-          // Auto-login with mock user in development
-          console.log('Auto mock login triggered');
-          dispatch(mockLogin() as any);
-        } else {
-          // If not authenticated and we require auth, redirect to login
-          console.log('Redirecting to login from Layout');
-          // Avoid potential redirect loops by checking current path
-          if (location.pathname !== '/login') {
-            navigate('/login', { replace: true });
-          }
+        // If not authenticated and we require auth, redirect to login
+        console.log('Redirecting to login from Layout');
+        // Avoid potential redirect loops by checking current path
+        if (location.pathname !== '/login') {
+          navigate('/login', { replace: true });
         }
       } else if (!requireAuth && isAuthenticated) {
         // If authenticated and on a non-auth required page (like login), redirect to home
@@ -77,7 +76,7 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
         navigate('/', { replace: true });
       }
     }
-  }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch, location.pathname]);
+  }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch, location.pathname, isDevMode]);
 
   // Show loading state
   if (isLoading) {

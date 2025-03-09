@@ -16,7 +16,8 @@ import {
   Snackbar,
   Alert,
   Divider,
-  Box
+  Box,
+  Typography
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 
@@ -25,14 +26,14 @@ import { Visibility, VisibilityOff } from '@mui/icons-material';
  * 
  * Provides user authentication functionality including:
  * - Standard email/password login
- * - Development mode mock login for testing
+ * - Development mode login for testing without real authentication
  * - Form validation and error handling
  * - Automatic redirection when authenticated
  */
 const Login = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { isAuthenticated, isLoading, error } = useSelector((state: RootState) => state.auth);
+  const { isAuthenticated, isLoading, error, isDevMode } = useSelector((state: RootState) => state.auth);
   
   // Form state
   const [email, setEmail] = useState('');
@@ -45,17 +46,21 @@ const Login = () => {
    */
   useEffect(() => {
     // Add logging to help debug the authentication state changes
-    console.log('Auth state changed in Login component:', { isAuthenticated, isLoading });
+    console.log('Auth state changed in Login component:', { 
+      isAuthenticated, 
+      isLoading,
+      isDevMode
+    });
     
     // Only navigate if authenticated and not loading
     if (isAuthenticated && !isLoading) {
       console.log('Redirecting to home from Login component');
-      // Use a slight delay to ensure state is fully updated before navigation
+      // Navigate to home page with a slight delay to ensure state is updated
       setTimeout(() => {
         navigate('/', { replace: true });
       }, 100);
     }
-  }, [isAuthenticated, isLoading, navigate]);
+  }, [isAuthenticated, isLoading, navigate, isDevMode]);
   
   /**
    * Handles form submission for email/password login
@@ -70,9 +75,16 @@ const Login = () => {
    * Handles development mode login
    * Creates a mock user session for testing without real authentication
    */
-  const handleMockLogin = () => {
-    console.log('Mock login button clicked');
+  const handleDevModeLogin = () => {
+    console.log('Dev mode login button clicked');
+    
+    // Dispatch mock login action
     dispatch(mockLogin() as any);
+    
+    // We'll manually navigate after a short delay to ensure the state is updated
+    setTimeout(() => {
+      navigate('/', { replace: true });
+    }, 300);
   };
   
   // Animation variants for page elements
@@ -186,13 +198,19 @@ const Login = () => {
             <Button
               variant="outlined"
               fullWidth
-              onClick={handleMockLogin}
+              onClick={handleDevModeLogin}
               className="py-3 border-primary/30 hover:bg-primary/5"
               startIcon={<TerminalSquare size={18} />}
               disabled={isLoading}
             >
               {isLoading ? 'Signing in...' : 'Development Mode Login'}
             </Button>
+
+            {process.env.NODE_ENV === 'development' && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
+                Bypasses Supabase authentication for faster development
+              </Typography>
+            )}
           </Paper>
         </motion.div>
         

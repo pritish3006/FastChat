@@ -9,12 +9,14 @@ import { supabase } from '@/utils/supabaseClient';
  * @property {boolean} isAuthenticated - Whether the user is authenticated
  * @property {boolean} isLoading - Whether an authentication operation is in progress
  * @property {string | null} error - Any error message from the last authentication operation
+ * @property {boolean} isDevMode - Whether the app is using development mode authentication
  */
 const initialState: AuthState = {
   user: null,
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  isDevMode: false,
 };
 
 /**
@@ -112,12 +114,13 @@ export const mockLogin = createAsyncThunk(
       // Create a mock user object
       const mockUser: User = {
         id: 'mock-user-id-123',
-        email: 'test@example.com',
-        username: 'TestUser',
+        email: 'dev@example.com',
+        username: 'DevUser',
         created_at: new Date().toISOString(),
       };
       
       console.log('Mock user created:', mockUser);
+      localStorage.setItem('devModeEnabled', 'true');
       
       // Return the mock user - this will be picked up by the fulfilled case
       return mockUser;
@@ -125,6 +128,40 @@ export const mockLogin = createAsyncThunk(
       console.error('Mock login failed:', error);
       throw error;
     }
+  }
+);
+
+/**
+ * Exit development mode and clear local storage
+ */
+export const exitDevMode = createAsyncThunk(
+  'auth/exitDevMode',
+  async () => {
+    localStorage.removeItem('devModeEnabled');
+    return null;
+  }
+);
+
+/**
+ * Check if dev mode is enabled in local storage
+ */
+export const checkDevMode = createAsyncThunk(
+  'auth/checkDevMode',
+  async () => {
+    const isDevMode = localStorage.getItem('devModeEnabled') === 'true';
+    
+    if (isDevMode) {
+      // Create a mock user object if in dev mode
+      const mockUser: User = {
+        id: 'mock-user-id-123',
+        email: 'dev@example.com',
+        username: 'DevUser',
+        created_at: new Date().toISOString(),
+      };
+      return mockUser;
+    }
+    
+    return null;
   }
 );
 
@@ -220,12 +257,37 @@ const authSlice = createSlice({
       state.isLoading = false;
       state.user = action.payload;
       state.isAuthenticated = true;
-      console.log('Mock login fulfilled, user authenticated:', state.isAuthenticated);
+      state.isDevMode = true;
+      console.log('Mock login fulfilled, user authenticated in dev mode:', state.isAuthenticated);
     });
     builder.addCase(mockLogin.rejected, (state, action) => {
       state.isLoading = false;
       state.error = action.payload as string;
       console.error('Mock login rejected:', action.payload);
+    });
+    
+    // Check Dev Mode
+    builder.addCase(checkDevMode.pending, (state) => {
+      state.isLoading = true;
+    });
+    builder.addCase(checkDevMode.fulfilled, (state, action: PayloadAction<User | null>) => {
+      if (action.payload) {
+        state.isLoading = false;
+        state.user = action.payload;
+        state.isAuthenticated = true;
+        state.isDevMode = true;
+        console.log('Dev mode detected, user auto-authenticated');
+      } else {
+        state.isDevMode = false;
+      }
+    });
+    
+    // Exit Dev Mode
+    builder.addCase(exitDevMode.fulfilled, (state) => {
+      state.user = null;
+      state.isAuthenticated = false;
+      state.isDevMode = false;
+      console.log('Exited dev mode');
     });
   },
 });
