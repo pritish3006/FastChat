@@ -5,21 +5,38 @@ import Sidebar from './Sidebar';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '@/redux/store';
 import { getSession, mockLogin } from '@/redux/features/authSlice';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
+/**
+ * Props for the Layout component
+ * @property {React.ReactNode} children - Child components to render within the layout
+ * @property {boolean} requireAuth - Whether authentication is required to access this layout
+ */
 interface LayoutProps {
   children: React.ReactNode;
   requireAuth?: boolean;
 }
 
-// Set this to true to enable auto mock login in development mode
-// This is being set to false since we're using the button in Login page instead
+// Set this to false to disable auto mock login in development mode
+// Users can still use the mock login button on the login page
 const AUTO_MOCK_LOGIN = false;
 
+/**
+ * Main layout component
+ * 
+ * Handles:
+ * - Authentication checks and redirects
+ * - Layout structure (header, sidebar, main content)
+ * - Authentication-based access control
+ * 
+ * @param {LayoutProps} props - Component props
+ * @returns {React.ReactElement} The rendered layout
+ */
 const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated, isLoading, user } = useSelector((state: RootState) => state.auth);
   const { isSidebarOpen } = useSelector((state: RootState) => state.chat);
 
@@ -35,10 +52,11 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
       isAuthenticated, 
       isLoading, 
       requireAuth,
-      user
+      user,
+      currentPath: location.pathname
     });
 
-    // Only redirect when loading is complete
+    // Only handle redirects when loading is complete
     if (!isLoading) {
       if (requireAuth && !isAuthenticated) {
         if (AUTO_MOCK_LOGIN) {
@@ -48,15 +66,18 @@ const Layout: React.FC<LayoutProps> = ({ children, requireAuth = true }) => {
         } else {
           // If not authenticated and we require auth, redirect to login
           console.log('Redirecting to login from Layout');
-          navigate('/login');
+          // Avoid potential redirect loops by checking current path
+          if (location.pathname !== '/login') {
+            navigate('/login', { replace: true });
+          }
         }
       } else if (!requireAuth && isAuthenticated) {
         // If authenticated and on a non-auth required page (like login), redirect to home
         console.log('Authenticated user on non-auth page, redirecting to home');
-        navigate('/');
+        navigate('/', { replace: true });
       }
     }
-  }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch]);
+  }, [isAuthenticated, isLoading, navigate, requireAuth, dispatch, location.pathname]);
 
   // Show loading state
   if (isLoading) {

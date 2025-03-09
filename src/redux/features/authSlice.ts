@@ -3,6 +3,13 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { AuthState, User } from '@/types';
 import { supabase } from '@/utils/supabaseClient';
 
+/**
+ * Initial state for the authentication slice
+ * @property {User | null} user - The current authenticated user or null if not authenticated
+ * @property {boolean} isAuthenticated - Whether the user is authenticated
+ * @property {boolean} isLoading - Whether an authentication operation is in progress
+ * @property {string | null} error - Any error message from the last authentication operation
+ */
 const initialState: AuthState = {
   user: null,
   isAuthenticated: false,
@@ -10,6 +17,10 @@ const initialState: AuthState = {
   error: null,
 };
 
+/**
+ * Async thunk for user registration
+ * Creates a new user account with email, password, and username
+ */
 export const signup = createAsyncThunk(
   'auth/signup',
   async ({ email, password, username }: { email: string; password: string; username: string }, { rejectWithValue }) => {
@@ -32,6 +43,10 @@ export const signup = createAsyncThunk(
   }
 );
 
+/**
+ * Async thunk for user login
+ * Authenticates a user with email and password
+ */
 export const login = createAsyncThunk(
   'auth/login',
   async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
@@ -49,6 +64,10 @@ export const login = createAsyncThunk(
   }
 );
 
+/**
+ * Async thunk for user logout
+ * Signs the current user out
+ */
 export const logout = createAsyncThunk(
   'auth/logout',
   async (_, { rejectWithValue }) => {
@@ -62,6 +81,10 @@ export const logout = createAsyncThunk(
   }
 );
 
+/**
+ * Async thunk to get the current session
+ * Checks if a user is already authenticated
+ */
 export const getSession = createAsyncThunk(
   'auth/getSession',
   async (_, { rejectWithValue }) => {
@@ -75,12 +98,17 @@ export const getSession = createAsyncThunk(
   }
 );
 
-// Mock authentication function for development
+/**
+ * Mock authentication function for development
+ * Creates a fake user session without requiring Supabase authentication
+ * IMPORTANT: Should be disabled in production environments
+ */
 export const mockLogin = createAsyncThunk(
   'auth/mockLogin',
-  async (_, { rejectWithValue }) => {
+  async (_, { dispatch }) => {
     try {
       console.log('Mock login initiated');
+      
       // Create a mock user object
       const mockUser: User = {
         id: 'mock-user-id-123',
@@ -90,21 +118,36 @@ export const mockLogin = createAsyncThunk(
       };
       
       console.log('Mock user created:', mockUser);
+      
+      // Return the mock user - this will be picked up by the fulfilled case
       return mockUser;
     } catch (error: any) {
       console.error('Mock login failed:', error);
-      return rejectWithValue('Mock authentication failed');
+      throw error;
     }
   }
 );
 
+/**
+ * Authentication slice for Redux
+ * Manages user authentication state and operations
+ */
 const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
+    /**
+     * Clears any authentication errors
+     */
     clearError: (state) => {
       state.error = null;
     },
+    /**
+     * Force sets the authenticated state (for development/testing only)
+     */
+    setAuthenticated: (state, action: PayloadAction<boolean>) => {
+      state.isAuthenticated = action.payload;
+    }
   },
   extraReducers: (builder) => {
     // Signup
@@ -187,5 +230,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { clearError } = authSlice.actions;
+export const { clearError, setAuthenticated } = authSlice.actions;
 export default authSlice.reducer;

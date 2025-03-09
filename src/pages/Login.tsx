@@ -20,15 +20,29 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 
+/**
+ * Login Page Component
+ * 
+ * Provides user authentication functionality including:
+ * - Standard email/password login
+ * - Development mode mock login for testing
+ * - Form validation and error handling
+ * - Automatic redirection when authenticated
+ */
 const Login = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, error } = useSelector((state: RootState) => state.auth);
   
+  // Form state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
+  /**
+   * Effect to handle redirection when user becomes authenticated
+   * Redirects to home page when authentication completes
+   */
   useEffect(() => {
     // Add logging to help debug the authentication state changes
     console.log('Auth state changed in Login component:', { isAuthenticated, isLoading });
@@ -36,20 +50,32 @@ const Login = () => {
     // Only navigate if authenticated and not loading
     if (isAuthenticated && !isLoading) {
       console.log('Redirecting to home from Login component');
-      navigate('/');
+      // Use a slight delay to ensure state is fully updated before navigation
+      setTimeout(() => {
+        navigate('/', { replace: true });
+      }, 100);
     }
   }, [isAuthenticated, isLoading, navigate]);
   
+  /**
+   * Handles form submission for email/password login
+   * @param {React.FormEvent} e - The form submission event
+   */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     dispatch(login({ email, password }) as any);
   };
 
+  /**
+   * Handles development mode login
+   * Creates a mock user session for testing without real authentication
+   */
   const handleMockLogin = () => {
     console.log('Mock login button clicked');
     dispatch(mockLogin() as any);
   };
   
+  // Animation variants for page elements
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
