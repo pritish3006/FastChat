@@ -53,7 +53,7 @@ const ChatContainer: React.FC = () => {
       </div>;
   }
   return <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-500">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#eef3f3] bg-[414549]">
         <div className="max-w-4xl mx-auto space-y-6">
           <AnimatePresence initial={false}>
             {messages.map((message: Message, index: number) => {
