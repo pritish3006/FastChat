@@ -51,7 +51,7 @@ const BotMessage: React.FC<BotMessageProps> = ({
         duration: 0.2
       }}>
           <Paper className="p-3 rounded-lg relative group" elevation={0}>
-            <div className="whitespace-pre-wrap bg-zinc-300">
+            <div className="whitespace-pre-wrap bg-slate-100">
               {message.content}
               {message.is_streaming && <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse-slow" />}
             </div>

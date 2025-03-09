@@ -62,7 +62,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
                   <Check size={18} />
                 </IconButton>
               </div>
-            </Paper> : <Paper elevation={0} className="p-3 rounded-lg border relative group bg-gray-200">
+            </Paper> : <Paper elevation={0} className="p-3 rounded-lg border relative group bg-[#d3d9e5]">
               <div className="whitespace-pre-wrap">
                 {message.content}
               </div>
