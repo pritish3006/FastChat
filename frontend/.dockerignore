@@ -1,0 +1,29 @@
+# Node modules
+node_modules
+npm-debug.log
+
+# Build files
+dist
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Git and GitHub files
+.git
+.github
+.gitignore
+
+# Editor directories and files
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# OS specific
+.DS_Store 
