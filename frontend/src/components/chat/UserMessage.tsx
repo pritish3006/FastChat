@@ -1,5 +1,14 @@
-// user message component that displays user messages in the chat interface
-// handles message editing functionality with optimistic updates
+/**
+ * user message component - shows user messages with editing options
+ * 
+ * features:
+ * - edit messages with live preview
+ * - copy to clipboard functionality
+ * - regenerate responses
+ * - branch navigation for viewing edit history
+ * - delete message option
+ * - responsive hover controls
+ */
 import React, { useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { updateMessage, setEditingMessageId, removeMessage, navigateToPreviousBranch, navigateToNextBranch } from '@/redux/features/chatSlice';
@@ -55,13 +64,13 @@ const UserMessage: React.FC<UserMessageProps> = ({
   useEffect(() => {
     if (isEditing && textFieldRef.current) {
       textFieldRef.current.focus();
-      // Position cursor at the end of the text
+      // position cursor at the end of the text
       const length = textFieldRef.current.value.length;
       textFieldRef.current.setSelectionRange(length, length)
     }
   }, [isEditing]);
   
-  // Calculate the branch number based on the rules:
+  // calculate the branch number based on the rules:
   // - current branch = n (total branches)
   // - most recent previous branch = n - 1
   // - oldest branch = 1
@@ -88,68 +97,68 @@ const UserMessage: React.FC<UserMessageProps> = ({
   const handleRegenerate = () => {
     if (isGenerating) return;
     
-    console.log("=== USER MESSAGE REGENERATE REQUESTED ===");
-    console.log("User message ID:", message.id);
+    console.log("=== user message regenerate requested ===");
+    console.log("user message id:", message.id);
     
-    // Get current state to find the next bot message
+    // get current state to find the next bot message
     const state = store.getState();
     const sessionId = state.chat.currentSessionId;
     
     if (!sessionId) {
-      console.error("No current session found");
+      console.error("no current session found");
       return;
     }
     
-    // Find the current session
+    // find the current session
     const session = state.chat.sessions.find(s => s.id === sessionId);
     if (!session) {
-      console.error("Session not found");
+      console.error("session not found");
       return;
     }
     
-    // Get all messages in the session
+    // get all messages in the session
     const allMessages = session.messages;
-    console.log("All messages in session:", allMessages.map(m => ({ id: m.id, role: m.role })));
+    console.log("all messages in session:", allMessages.map(m => ({ id: m.id, role: m.role })));
     
-    // Find this message's index in the session
+    // find this message's index in the session
     const currentMessageIndex = allMessages.findIndex(m => m.id === message.id);
     if (currentMessageIndex === -1) {
-      console.error("Cannot find current message in session, ID:", message.id);
+      console.error("cannot find current message in session, id:", message.id);
       return;
     }
     
-    console.log(`Found user message at index ${currentMessageIndex} of ${allMessages.length}`);
+    console.log(`found user message at index ${currentMessageIndex} of ${allMessages.length}`);
     
-    // Check if there's a bot message after this user message
+    // check if there's a bot message after this user message
     if (currentMessageIndex < allMessages.length - 1) {
       const nextMessage = allMessages[currentMessageIndex + 1];
       
-      // If the next message is from the bot, remove it instead of replacing it
+      // if the next message is from the bot, remove it instead of replacing it
       if (nextMessage.role === 'assistant') {
-        console.log("Found bot message to remove:", nextMessage.id);
+        console.log("found bot message to remove:", nextMessage.id);
         
-        // Dispatch action to remove the message
+        // dispatch action to remove the message
         store.dispatch(removeMessage(nextMessage.id));
         
-        console.log("Removed bot message, now generating new response");
+        console.log("removed bot message, now generating new response");
       }
     }
     
-    // Generate a new response (without replacement)
-    console.log("Generating new bot response");
+    // generate a new response (without replacement)
+    console.log("generating new bot response");
     webSocketManager.regenerateResponse(message.content, currentModelId || 'gpt-4');
   };
 
   // handler for saving a message after editing
   const handleSave = () => {
-    console.log("=== SAVING EDITED MESSAGE ===");
-    console.log("Message ID:", message.id);
+    console.log("=== saving edited message ===");
+    console.log("message id:", message.id);
     
-    // Check if content actually changed
+    // check if content actually changed
     const hasChanged = editedContent.trim() !== message.content;
     
     if (hasChanged) {
-      // Update the message in the store
+      // update the message in the store
       dispatch(updateMessage({
         id: message.id,
         content: editedContent.trim()
@@ -157,7 +166,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
       
       setContentChanged(true);
       
-      // Find all messages after this user message and archive them (branch handling)
+      // find all messages after this user message and archive them (branch handling)
       const state = store.getState();
       const sessionId = state.chat.currentSessionId;
       
@@ -165,30 +174,30 @@ const UserMessage: React.FC<UserMessageProps> = ({
         const session = state.chat.sessions.find(s => s.id === sessionId);
         if (session) {
           const msgIndex = session.messages.findIndex(m => m.id === message.id);
-          console.log(`Found user message at index ${msgIndex} of ${session.messages.length}`);
+          console.log(`found user message at index ${msgIndex} of ${session.messages.length}`);
           
-          // Check if there are any messages after this one
+          // check if there are any messages after this one
           if (msgIndex >= 0 && msgIndex < session.messages.length - 1) {
-            // Get all messages after the edited message
+            // get all messages after the edited message
             const messagesAfter = session.messages.slice(msgIndex + 1);
-            console.log(`Found ${messagesAfter.length} messages after the edited message, archiving them`);
+            console.log(`found ${messagesAfter.length} messages after the edited message, archiving them`);
             
-            // Remove all messages after the edited one (they will be archived in a branch)
+            // remove all messages after the edited one (they will be archived in a branch)
             for (const msgToRemove of messagesAfter) {
-              // TODO: In a real implementation, these messages would be stored in a branch
+              // todo: in a real implementation, these messages would be stored in a branch
               store.dispatch(removeMessage(msgToRemove.id));
             }
             
-            // Wait for state updates to complete
+            // wait for state updates to complete
             setTimeout(() => {
-              // Generate a new response to the edited message, starting a new branch
+              // generate a new response to the edited message, starting a new branch
               webSocketManager.regenerateResponse(
                 editedContent.trim(), 
                 currentModelId || 'gpt-4'
               );
             }, 100);
           } else {
-            // If this is the last message, just generate a new response
+            // if this is the last message, just generate a new response
             setTimeout(() => {
               webSocketManager.regenerateResponse(editedContent.trim(), currentModelId || 'gpt-4');
             }, 100);
@@ -197,14 +206,14 @@ const UserMessage: React.FC<UserMessageProps> = ({
       }
     }
     
-    // Exit editing mode even if content didn't change
+    // exit editing mode even if content didn't change
     setIsEditing(false);
     dispatch(setEditingMessageId(null));
   };
 
   // cancels edit mode and reverts content
   const handleCancel = () => {
-    console.log("Cancelling edit mode");
+    console.log("cancelling edit mode");
     setEditedContent(message.content);
     setIsEditing(false);
     dispatch(setEditingMessageId(null));
@@ -212,10 +221,10 @@ const UserMessage: React.FC<UserMessageProps> = ({
   
   // handler to delete this message
   const handleDelete = () => {
-    console.log("=== DELETING MESSAGE ===");
-    console.log("Message ID:", message.id);
+    console.log("=== deleting message ===");
+    console.log("message id:", message.id);
     
-    // Find messages after this one to handle branching
+    // find messages after this one to handle branching
     const state = store.getState();
     const sessionId = state.chat.currentSessionId;
     
@@ -224,7 +233,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
       if (session) {
         const msgIndex = session.messages.findIndex(m => m.id === message.id);
         
-        // If there's a bot message right after this user message, remove it too
+        // if there's a bot message right after this user message, remove it too
         if (msgIndex >= 0 && msgIndex < session.messages.length - 1) {
           const nextMessage = session.messages[msgIndex + 1];
           if (nextMessage.role === 'assistant') {
@@ -232,7 +241,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
           }
         }
         
-        // Remove this message
+        // remove this message
         store.dispatch(removeMessage(message.id));
       }
     }
@@ -249,14 +258,14 @@ const UserMessage: React.FC<UserMessageProps> = ({
 
   // handler for keyboard events to support shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    console.log("Key pressed:", e.key);
+    console.log("key pressed:", e.key);
     
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSave();
     } else if (e.key === "Escape") {
-      e.preventDefault(); // Prevent default behavior
-      console.log("Escape key pressed, cancelling edit");
+      e.preventDefault(); // prevent default behavior
+      console.log("escape key pressed, cancelling edit");
       handleCancel();
     }
   };
@@ -332,16 +341,16 @@ const UserMessage: React.FC<UserMessageProps> = ({
                   {message.content}
                 </div>
                 
-                {/* Action buttons shown on hover */}
+                {/* action buttons shown on hover */}
                 <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  {/* Copy button */}
+                  {/* copy button */}
                   <Tooltip title="Copy to clipboard">
                     <IconButton size="small" onClick={handleCopy} className="text-muted-foreground">
                       <Copy size={16} />
                     </IconButton>
                   </Tooltip>
                   
-                  {/* Edit button - only show if not currently generating */}
+                  {/* edit button - only show if not currently generating */}
                   {!isGenerating && (
                     <Tooltip title="Edit message">
                       <IconButton size="small" onClick={handleEdit} className="text-muted-foreground">
@@ -350,14 +359,14 @@ const UserMessage: React.FC<UserMessageProps> = ({
                     </Tooltip>
                   )}
                   
-                  {/* Delete button */}
+                  {/* delete button */}
                   <Tooltip title="Delete message">
                     <IconButton size="small" onClick={handleDelete} className="text-muted-foreground">
                       <Trash2 size={16} />
                     </IconButton>
                   </Tooltip>
                   
-                  {/* Regenerate button - only show if this is the last user message */}
+                  {/* regenerate button - only show if this is the last user message */}
                   {isLastUserMessage && !isGenerating && (
                     <Tooltip title="Regenerate response">
                       <IconButton size="small" onClick={handleRegenerate} className="text-muted-foreground">
@@ -366,7 +375,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
                     </Tooltip>
                   )}
                   
-                  {/* Disabled regenerate button when generating */}
+                  {/* disabled regenerate button when generating */}
                   {isLastUserMessage && isGenerating && (
                     <Tooltip title="Cannot regenerate while generating">
                       <span>
@@ -383,7 +392,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
                 </div>
               </Paper>
               
-              {/* Branch navigation controls - moved below the message */}
+              {/* branch navigation controls - moved below the message */}
               {hasBranches && (
                 <div className="flex items-center justify-end gap-1 mt-1 text-xs text-muted-foreground">
                   <IconButton 
@@ -413,7 +422,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
         </motion.div>
       </div>
       
-      {/* Copy success notification */}
+      {/* copy success notification */}
       <Snackbar
         open={copySuccess}
         autoHideDuration={2000}

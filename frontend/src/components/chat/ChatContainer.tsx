@@ -1,6 +1,12 @@
 /**
- * chat container component that manages the display and interaction of chat messages
- * handles message rendering, scrolling, and empty states
+ * chat container - the main message display area
+ * 
+ * what it does:
+ * - renders all messages with proper animations
+ * - handles scrolling behavior & auto-scroll
+ * - displays scroll-to-bottom button when needed
+ * - blurs messages during editing
+ * - manages branch point navigation
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
@@ -33,41 +39,41 @@ const ChatContainer: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // State to track if we should show the scroll-to-bottom button
+  // state to track if we should show the scroll-to-bottom button
   const [showScrollButton, setShowScrollButton] = useState(false);
-  // Track if user has manually scrolled up
+  // track if user has manually scrolled up
   const [userHasScrolled, setUserHasScrolled] = useState(false);
 
   // find current chat session and its messages
   const currentSession = sessions.find(session => session.id === currentSessionId);
   
-  // Get either main thread messages or branch messages based on active branch
+  // get either main thread messages or branch messages based on active branch
   let messages: Message[] = [];
   
   if (currentSession) {
     if (activeBranchId) {
-      // Display messages from the active branch
+      // display messages from the active branch
       const branch = currentSession.branches.find(b => b.id === activeBranchId);
       if (branch) {
         messages = branch.messages;
       } else {
-        // Fallback to main thread if branch not found
+        // fallback to main thread if branch not found
         messages = currentSession.messages;
       }
     } else {
-      // Display main thread messages
+      // display main thread messages
       messages = currentSession.messages;
     }
   }
 
   /**
-   * Check if the chat is scrolled to the bottom
+   * check if the chat is scrolled to the bottom
    */
   const isAtBottom = useCallback(() => {
     const container = containerRef.current;
     if (!container) return true;
     
-    const threshold = 100; // Allow a small threshold to still be considered "at bottom"
+    const threshold = 100; // allow a small threshold to still be considered "at bottom"
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
   }, []);
 
@@ -82,27 +88,27 @@ const ChatContainer: React.FC = () => {
       behavior: 'smooth'
     });
     
-    // Hide the button after scrolling to bottom
+    // hide the button after scrolling to bottom
     setShowScrollButton(false);
     setUserHasScrolled(false);
   }, []);
   
   /**
-   * Handle scroll events to show/hide the scroll button
+   * handle scroll events to show/hide the scroll button
    */
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
     
     const isBottom = isAtBottom();
     
-    // Track if user has scrolled up
+    // track if user has scrolled up
     if (!isBottom) {
       setUserHasScrolled(true);
       setShowScrollButton(true);
     } else {
       setShowScrollButton(false);
       
-      // Reset user scroll flag if they scrolled back to bottom
+      // reset user scroll flag if they scrolled back to bottom
       if (userHasScrolled) {
         setUserHasScrolled(false);
       }
@@ -110,7 +116,7 @@ const ChatContainer: React.FC = () => {
   }, [isAtBottom, userHasScrolled]);
   
   /**
-   * Initialize scroll event listener
+   * initialize scroll event listener
    */
   useEffect(() => {
     const container = containerRef.current;
@@ -123,29 +129,29 @@ const ChatContainer: React.FC = () => {
   }, [handleScroll]);
   
   /**
-   * Auto-scroll effect for new messages
+   * auto-scroll effect for new messages
    */
   useEffect(() => {
-    // If user hasn't manually scrolled up or if we're generating, scroll to bottom
+    // if user hasn't manually scrolled up or if we're generating, scroll to bottom
     if (!userHasScrolled || isGenerating) {
       scrollToBottom();
     } else if (isGenerating) {
-      // Always show scroll button when generating but user has scrolled
+      // always show scroll button when generating but user has scrolled
       setShowScrollButton(true);
     }
   }, [messages.length, scrollToBottom, userHasScrolled, isGenerating]);
   
   /**
-   * Effect to handle when generation finishes
+   * effect to handle when generation finishes
    */
   useEffect(() => {
-    // When generation stops and user hasn't scrolled, scroll to bottom
+    // when generation stops and user hasn't scrolled, scroll to bottom
     if (!isGenerating && !userHasScrolled) {
       scrollToBottom();
     }
   }, [isGenerating, scrollToBottom, userHasScrolled]);
 
-  // Find the index of the last user message
+  // find the index of the last user message
   const getLastUserMessageIndex = () => {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
@@ -157,7 +163,7 @@ const ChatContainer: React.FC = () => {
 
   const lastUserMessageIndex = getLastUserMessageIndex();
   
-  // Determine which message is being edited
+  // determine which message is being edited
   const getEditingMessageIndex = () => {
     if (!editingMessageId) return -1;
     return messages.findIndex(m => m.id === editingMessageId);
@@ -165,7 +171,7 @@ const ChatContainer: React.FC = () => {
   
   const editingMessageIndex = getEditingMessageIndex();
   
-  // Find if we have a branch point in this message thread
+  // find if we have a branch point in this message thread
   const branchPointIndex = currentSession?.messages.findIndex(m => m.branch_point) ?? -1;
   const hasBranches = branchPointIndex !== -1 && currentSession?.branches.length > 0;
 
@@ -214,8 +220,8 @@ const ChatContainer: React.FC = () => {
               const isEditing = message.id === editingMessageId;
               const isBranchPoint = message.branch_point;
               
-              // Create classes for blur effect when in edit mode
-              // When editing, blur everything except the message being edited
+              // create classes for blur effect when in edit mode
+              // when editing, blur everything except the message being edited
               const messageClasses = editingMessageId 
                 ? isEditing 
                   ? 'opacity-100' 
@@ -265,7 +271,7 @@ const ChatContainer: React.FC = () => {
           <div ref={messagesEndRef} />
         </div>
         
-        {/* Scroll to bottom button */}
+        {/* scroll to bottom button */}
         <AnimatePresence>
           {showScrollButton && (
             <motion.div 

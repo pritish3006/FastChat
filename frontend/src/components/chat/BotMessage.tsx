@@ -44,12 +44,12 @@ const BotMessage: React.FC<BotMessageProps> = ({
   const { sessions, currentSessionId } = useSelector((state: RootState) => state.chat);
   const editingMessageId = useSelector((state: RootState) => state.chat.editingMessageId);
   
-  // Only show cursor when the message is actively streaming
+  // only show cursor when the message is actively streaming
   const showCursorBlink = isLastMessage && message.is_streaming;
 
-  // Remove timestamp prefix if present in content
+  // remove timestamp prefix if present in content
   let displayContent = message.content;
-  // Check for timestamp pattern [hh:mm:ss] at the beginning and remove it
+  // check for timestamp pattern [hh:mm:ss] at the beginning
   if (displayContent.match(/^\[\d{2}:\d{2}(:\d{2})?\]/)) {
     displayContent = displayContent.replace(/^\[\d{2}:\d{2}(:\d{2})?\]\s*/, '');
   }
@@ -75,34 +75,34 @@ const BotMessage: React.FC<BotMessageProps> = ({
   // regenerate the last message response in-place
   const handleRegenerate = () => {
     if (isGenerating) {
-      console.log("Cannot regenerate while already generating");
+      console.log("cannot regenerate while already generating");
       return;
     }
     
-    console.log("=== STARTING REGENERATION ===");
-    console.log("Message to regenerate:", message);
+    console.log("=== starting regeneration ===");
+    console.log("message to regenerate:", message);
     
-    // Find the latest user message to regenerate from
+    // find the latest user message to regenerate from
     const currentSession = sessions.find(session => session.id === currentSessionId);
     if (!currentSession) {
-      console.error("Cannot find current session");
+      console.error("cannot find current session");
       return;
     }
     
-    // Get all messages in the session
+    // get all messages in the session
     const allMessages = currentSession.messages;
-    console.log("All messages in session:", allMessages.map(m => ({ id: m.id, role: m.role })));
+    console.log("all messages in session:", allMessages.map(m => ({ id: m.id, role: m.role })));
     
-    // Find this message's index in the session
+    // find this message's index in the session
     const currentMessageIndex = allMessages.findIndex(m => m.id === message.id);
     if (currentMessageIndex === -1) {
-      console.error("Cannot find current message in session, ID:", message.id);
+      console.error("cannot find current message in session, id:", message.id);
       return;
     }
     
-    console.log(`Found bot message at index ${currentMessageIndex} of ${allMessages.length}`);
+    console.log(`found bot message at index ${currentMessageIndex} of ${allMessages.length}`);
     
-    // Find the last user message before this message
+    // find the last user message before this message
     let lastUserMessage = '';
     let lastUserMessageId = '';
     
@@ -110,28 +110,28 @@ const BotMessage: React.FC<BotMessageProps> = ({
       if (allMessages[i].role === 'user') {
         lastUserMessage = allMessages[i].content;
         lastUserMessageId = allMessages[i].id;
-        console.log(`Found user message at index ${i}: ${lastUserMessageId}`);
+        console.log(`found user message at index ${i}: ${lastUserMessageId}`);
         break;
       }
     }
     
     if (!lastUserMessage) {
-      console.error("No user message found before this bot message");
+      console.error("no user message found before this bot message");
       return;
     }
     
-    console.log(`Will regenerate bot message ${message.id} in response to user message: "${lastUserMessage.substring(0, 30)}..."`);
+    console.log(`will regenerate bot message ${message.id} in response to user message: "${lastUserMessage.substring(0, 30)}..."`);
     
     try {
-      // Pass the current message ID to replace in-place
+      // pass the current message id to replace in-place
       webSocketManager.regenerateResponse(
         lastUserMessage,
         currentSession.model_id,
         message.id
       );
-      console.log("Regeneration request sent successfully");
+      console.log("regeneration request sent successfully");
     } catch (error) {
-      console.error("Failed to start regeneration:", error);
+      console.error("failed to start regeneration:", error);
     }
   };
 
@@ -145,7 +145,7 @@ const BotMessage: React.FC<BotMessageProps> = ({
       
       <div className="flex-1 relative">
         <div className="flex items-center justify-between">
-           <span className="text-xs text-muted-foreground">{formatTimestamp(message.timestamp)}</span>
+          <span className="text-xs text-muted-foreground">{formatTimestamp(message.timestamp)}</span>
         </div>
         
         <motion.div layout className="mt-1" initial={{
@@ -164,6 +164,7 @@ const BotMessage: React.FC<BotMessageProps> = ({
               }
             </div>
             
+            {/* action buttons shown on hover */}
             <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
               <Tooltip title="Copy to clipboard">
                 <IconButton size="small" onClick={handleCopy} className="text-muted-foreground">
@@ -171,6 +172,7 @@ const BotMessage: React.FC<BotMessageProps> = ({
                 </IconButton>
               </Tooltip>
               
+              {/* regenerate button - only visible on last message and when not streaming */}
               {isLastMessage && !message.is_streaming && !isGenerating && (
                 <Tooltip title="Regenerate response">
                   <IconButton size="small" onClick={handleRegenerate} className="text-muted-foreground">
@@ -179,10 +181,10 @@ const BotMessage: React.FC<BotMessageProps> = ({
                 </Tooltip>
               )}
               
-              {/* Disabled regenerate button when generating */}
+              {/* disabled regenerate button when generating */}
               {isLastMessage && !message.is_streaming && isGenerating && (
                 <Tooltip title="Cannot regenerate while generating">
-                  {/* Wrap disabled button in span to fix MUI tooltip issue */}
+                  {/* wrap disabled button in span to fix mui tooltip issue */}
                   <span>
                     <IconButton 
                       size="small" 
@@ -199,6 +201,7 @@ const BotMessage: React.FC<BotMessageProps> = ({
         </motion.div>
       </div>
       
+      {/* copy success notification */}
       <Snackbar
         open={copySuccess}
         autoHideDuration={2000}

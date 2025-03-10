@@ -1,7 +1,12 @@
 /**
- * chat slice 🔥
- * handles all our chat stuff - sessions, messages, models & ui state
- * built with @reduxjs/toolkit + typescript
+ * chat slice - core state management for the entire chat functionality
+ * 
+ * what it manages:
+ * - chat sessions and messages
+ * - message streaming states
+ * - branch creation and navigation
+ * - model selection
+ * - ui states like sidebar visibility
  */
 
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
@@ -9,15 +14,12 @@ import { ChatState, Message, ChatSession, Model, MessageBranch } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
- * initial state check:
- * - empty sessions array
- * - no current chat selected
- * - gpt-4 set as default model - this will be replaced with the actual model id from the backend
+ * initial state with empty chats and default settings
  */
 const initialState: ChatState = {
   sessions: [],
   currentSessionId: null,
-  // TODO: replace with actual models from the backend
+  // models available in the app
   availableModels: [
     { id: 'gpt-4', name: 'GPT-4', isActive: true },
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', isActive: false },
@@ -34,15 +36,15 @@ const initialState: ChatState = {
 };
 
 /**
- * grabs chat history from backend (todo)
- * TODO: replace simulated API callwith actual backend call
+ * async thunk to fetch chat history from backend (todo)
+ * TODO: replace simulated API call with actual backedn call
  */
 export const fetchChatSessions = createAsyncThunk(
   'chat/fetchChatSessions',
   async (userId: string, { rejectWithValue }) => {
     try {
-      // This would be replaced with an actual API call to fetch chat sessions
-      // For now, we're returning an empty array
+      // this would be replaced with an actual api call
+      // placeholder for now
       return [] as ChatSession[];
     } catch (error: any) {
       return rejectWithValue(error.message);
@@ -80,7 +82,7 @@ const chatSlice = createSlice({
     // switches active chat
     setCurrentSession: (state, action: PayloadAction<string>) => {
       state.currentSessionId = action.payload;
-      // Reset branch state when switching sessions
+      // reset branch state when switching sessions
       state.activeBranchId = null;
       state.currentBranchIndex = 0;
     },
@@ -147,7 +149,7 @@ const chatSlice = createSlice({
     // updates message content and creates a branch
     updateMessage: (state, action: PayloadAction<{ id: string; content: string }>) => {
       if (!state.currentSessionId) {
-        console.error("updateMessage: No current session ID");
+        console.error("updateMessage: no current session id");
         return;
       }
       
@@ -156,7 +158,7 @@ const chatSlice = createSlice({
       );
       
       if (sessionIndex === -1) {
-        console.error(`updateMessage: Session not found: ${state.currentSessionId}`);
+        console.error(`updateMessage: session not found: ${state.currentSessionId}`);
         return;
       }
       
@@ -165,66 +167,66 @@ const chatSlice = createSlice({
       );
       
       if (messageIndex === -1) {
-        console.error(`updateMessage: Message not found: ${action.payload.id}`);
+        console.error(`updateMessage: message not found: ${action.payload.id}`);
         return;
       }
       
       const currentSession = state.sessions[sessionIndex];
       const editedMessage = currentSession.messages[messageIndex];
       
-      // Check if this message already has branches
+      // check if this message already has branches
       const isFirstEdit = !editedMessage.branch_point;
       
-      // Create a branch from the current message thread
+      // create a branch from the current message thread
       if (isFirstEdit) {
-        // Mark the original message as a branch point
+        // mark the original message as a branch point
         currentSession.messages[messageIndex].branch_point = true;
         
-        // Store all messages after the edited message in a new branch
+        // store all messages after the edited message in a new branch
         const messagesAfter = currentSession.messages.slice(messageIndex + 1);
         
         if (messagesAfter.length > 0) {
-          // Create a new branch with the original thread
+          // create a new branch with the original thread
           const newBranch: MessageBranch = {
             id: uuidv4(),
             parentMessageId: editedMessage.id,
             messages: [
-              // Include the original version of the edited message
+              // include the original version of the edited message
               { ...editedMessage, id: uuidv4() },
-              // And all subsequent messages
+              // and all subsequent messages
               ...messagesAfter
             ],
             createdAt: Date.now()
           };
           
-          // Add the branch to the session
+          // add the branch to the session
           currentSession.branches.push(newBranch);
         }
       }
       
-      // Update the version number for the edited message
+      // update the version number for the edited message
       const currentVersion = currentSession.messages[messageIndex].version || 0;
       currentSession.messages[messageIndex].version = currentVersion + 1;
       
-      // Update the message content
+      // update the message content
       currentSession.messages[messageIndex].content = action.payload.content;
       currentSession.updated_at = Date.now();
       
-      // Remove all messages after the edited one from the main thread
+      // remove all messages after the edited one from the main thread
       currentSession.messages = currentSession.messages.slice(0, messageIndex + 1);
       
-      // Create a new branch from the current edit
+      // create a new branch from the current edit
       if (currentSession.messages[messageIndex].branch_point && currentSession.branches.length > 0) {
-        // Reset branch navigation
+        // reset branch navigation
         state.currentBranchIndex = 0;
         state.activeBranchId = null;
       }
     },
     
-    // handles streaming state
+    // manages message streaming state
     setStreamingFlag: (state, action: PayloadAction<{ id: string; isStreaming: boolean }>) => {
       if (!state.currentSessionId) {
-        console.error("setStreamingFlag: No current session ID");
+        console.error("setStreamingFlag: no current session id");
         return;
       }
       
@@ -233,7 +235,7 @@ const chatSlice = createSlice({
       );
       
       if (sessionIndex === -1) {
-        console.error(`setStreamingFlag: Session not found: ${state.currentSessionId}`);
+        console.error(`setStreamingFlag: session not found: ${state.currentSessionId}`);
         return;
       }
       
@@ -242,15 +244,15 @@ const chatSlice = createSlice({
       );
       
       if (messageIndex === -1) {
-        console.error(`setStreamingFlag: Message not found: ${action.payload.id}`);
+        console.error(`setStreamingFlag: message not found: ${action.payload.id}`);
         return;
       }
       
-      // Update the streaming flag
+      // update the streaming flag
       state.sessions[sessionIndex].messages[messageIndex].is_streaming = action.payload.isStreaming;
     },
     
-    // switches ai model
+    // changes the current model
     setCurrentModel: (state, action: PayloadAction<string>) => {
       state.currentModelId = action.payload;
       
@@ -261,22 +263,22 @@ const chatSlice = createSlice({
       }));
     },
     
-    // ai response loading state
+    // tracks message generation state
     setIsGenerating: (state, action: PayloadAction<boolean>) => {
       state.isGenerating = action.payload;
     },
     
-    // sidebar toggle
+    // toggles the sidebar visibility
     toggleSidebar: (state) => {
       state.isSidebarOpen = !state.isSidebarOpen;
     },
     
-    // force sidebar state
+    // sets sidebar visibility
     setSidebarOpen: (state, action: PayloadAction<boolean>) => {
       state.isSidebarOpen = action.payload;
     },
     
-    // removes a message
+    // removes a message from a session
     removeMessage: (state, action: PayloadAction<string>) => {
       if (state.currentSessionId) {
         const sessionIndex = state.sessions.findIndex(s => s.id === state.currentSessionId);
@@ -288,12 +290,12 @@ const chatSlice = createSlice({
       }
     },
     
-    // reducer to track message being edited
+    // tracks which message is being edited
     setEditingMessageId: (state, action: PayloadAction<string | null>) => {
       state.editingMessageId = action.payload;
     },
     
-    // Navigate to previous branch
+    // navigate to previous branch
     navigateToPreviousBranch: (state) => {
       if (!state.currentSessionId) return;
       
@@ -302,34 +304,42 @@ const chatSlice = createSlice({
       
       const session = state.sessions[sessionIndex];
       
-      // Find the branch point message
+      // find the branch point message
       const branchPointIndex = session.messages.findIndex(m => m.branch_point);
       if (branchPointIndex === -1) return;
       
       const parentMessageId = session.messages[branchPointIndex].id;
       
-      // Get branches for this parent message
+      // get the branches for this parent message
       const branches = session.branches.filter(b => b.parentMessageId === parentMessageId);
       
       if (branches.length === 0) return;
       
-      // If we're in the main branch (which is conceptually the "newest" branch)
+      // if we're in the main branch (which is conceptually the "newest" branch)
       if (!state.activeBranchId && state.currentBranchIndex === 0) {
         // Switch to the most recent branch (n-1)
         state.activeBranchId = branches[0].id;
         state.currentBranchIndex = 1;
       } 
-      // If we're already in a branch, go to an older branch
+      // if we're already in a branch, go to an older branch
       else if (state.activeBranchId) {
+        const currentBranch = session.branches.find(b => b.id === state.activeBranchId);
+        if (!currentBranch) return;
+        
+        const parentMessageId = currentBranch.parentMessageId;
+        
+        // get all branches for this parent
+        const branches = session.branches.filter(b => b.parentMessageId === parentMessageId);
+        
         const currentBranchIndex = branches.findIndex(b => b.id === state.activeBranchId);
         
-        // If we found the branch and we're not at the oldest one
+        // if we found the branch and we're not at the oldest one
         if (currentBranchIndex !== -1 && currentBranchIndex < branches.length - 1) {
-          // Move to the next older branch (increase index to move toward 1)
+          // move to the next older branch (increase index to move toward 1)
           state.activeBranchId = branches[currentBranchIndex + 1].id;
           state.currentBranchIndex = currentBranchIndex + 2; // +2 because main branch is 0, and array is 0-indexed
         }
-        // If we're at the oldest branch, loop back to main branch (current/newest)
+        // if we're at the oldest branch, loop back to main branch (current/newest)
         else if (currentBranchIndex === branches.length - 1) {
           state.activeBranchId = null;
           state.currentBranchIndex = 0;
@@ -337,7 +347,7 @@ const chatSlice = createSlice({
       }
     },
     
-    // Navigate to next branch
+    // navigate to next branch
     navigateToNextBranch: (state) => {
       if (!state.currentSessionId) return;
       
@@ -346,37 +356,37 @@ const chatSlice = createSlice({
       
       const session = state.sessions[sessionIndex];
       
-      // Find the branch point message
+      // find the branch point message
       const branchPointIndex = session.messages.findIndex(m => m.branch_point);
       if (branchPointIndex === -1) return;
       
       const parentMessageId = session.messages[branchPointIndex].id;
       
-      // Get branches for this parent message
+      // get branches for this parent message
       const branches = session.branches.filter(b => b.parentMessageId === parentMessageId);
       
       if (branches.length === 0) return;
       
-      // If we're in the oldest branch (conceptually branch #1)
+      // if we're in the oldest branch (conceptually branch #1)
       if (state.activeBranchId) {
         const currentBranchIndex = branches.findIndex(b => b.id === state.activeBranchId);
         
-        // If found and not at newest branch
+        // if found and not at newest branch
         if (currentBranchIndex !== -1 && currentBranchIndex > 0) {
-          // Move to a newer branch (decrease index to move toward n)
+          // move to a newer branch (decrease index to move toward n)
           state.activeBranchId = branches[currentBranchIndex - 1].id;
-          state.currentBranchIndex = currentBranchIndex; // The index goes from high to low as branches get newer
+          state.currentBranchIndex = currentBranchIndex; // the index goes from high to low as branches get newer
         }
-        // If we're at the newest branch (#2)
+        // if we're at the newest branch (#2)
         else if (currentBranchIndex === 0) {
-          // Go to main branch (the current branch, #n)
+          // go to main branch (the current branch, #n)
           state.activeBranchId = null;
           state.currentBranchIndex = 0;
         }
       }
-      // If we're in the main branch (newest, #n)
+      // if we're in the main branch (newest, #n)
       else if (!state.activeBranchId && state.currentBranchIndex === 0) {
-        // Go to the oldest branch (#1)
+        // go to the oldest branch (#1)
         state.activeBranchId = branches[branches.length - 1].id;
         state.currentBranchIndex = branches.length;
       }
@@ -395,7 +405,7 @@ const chatSlice = createSlice({
   }
 });
 
-// Export the chat slice actions
+// export the chat slice actions
 export const { 
   createNewSession, 
   setCurrentSession, 
