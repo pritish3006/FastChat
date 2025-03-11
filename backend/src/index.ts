@@ -1,36 +1,29 @@
 /**
- * Fast Chat Backend Application
+ * fast chat backend application
  * 
- * This is the main entry point for the FastChat backend application.
- * It initializes the Express server, sets up middleware, and defines API routes.
+ * main entry point for the backend server.
+ * initializes the server using the modular server architecture.
  */
 
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+import { initializeServer } from './server/index';
+import { startServer } from './server/lifecycle';
+import { config } from './config/index';
+import logger from './utils/logger';
 
-// Load environment variables
-dotenv.config();
+// Display startup validation warnings
+if (config.server.nodeEnv === 'development') {
+  // Check if using fallback services
+  if (config.llm.provider === 'ollama' && !process.env.OLLAMA_BASE_URL) {
+    logger.info('using default ollama endpoint - ensure ollama is running locally');
+  }
+}
 
-// Initialize Express app
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// Basic health check route
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'Server is running' });
-});
-
-// API routes will be registered here
+// Initialize the server
+const server = initializeServer();
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`Health check available at http://localhost:${PORT}/api/health`);
-});
+const port = config.server.port;
+startServer(server, port);
 
-export default app; 
+// Export the io instance from the server module for other modules to use
+export { io } from './server/index'; 

@@ -1,27 +1,55 @@
 {
   "name": "fast-chat-backend",
   "version": "0.1.0",
-  "description": "Backend API for the Fast Chat application",
+  "description": "Backend API for Fast Chat application",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint 'src/**/*.ts'",
     "test": "jest",
-    "lint": "eslint . --ext .ts"
+    "test:watch": "jest --watch",
+    "db:migrate": "node scripts/migrate.js"
   },
+  "keywords": [
+    "chat",
+    "llm",
+    "ai",
+    "ollama",
+    "streaming",
+    "typescript",
+    "express"
+  ],
+  "author": "PRITISH MISHRA",
+  "license": "MIT",
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.6",
+    "compression": "^1.8.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.1",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
     "socket.io": "^4.7.4",
-    "@supabase/supabase-js": "^2.39.3"
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
-    "@types/node": "^20.11.17",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^20.11.16",
+    "@types/pino": "^7.0.4",
+    "@types/uuid": "^9.0.7",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
     "eslint": "^8.56.0",
@@ -31,4 +59,4 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
-} 
+}
