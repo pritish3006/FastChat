@@ -13,7 +13,7 @@ import logger from '../utils/logger';
 dotenv.config();
 
 // define critical configuration fields that must be present
-const CRITICAL_FIELDS = ['SUPABASE_URL', 'SUPABASE_KEY'];
+const CRITICAL_FIELDS = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
 
 // define config schema with zod for validation
 const configSchema = z.object({
@@ -27,7 +27,13 @@ const configSchema = z.object({
   
   // supabase config
   SUPABASE_URL: z.string().url(),
-  SUPABASE_KEY: z.string().min(1),
+  SUPABASE_SERVICE_KEY: z.string().min(1),
+  SUPABASE_ANON_KEY: z.string().min(1),
+  SUPABASE_DB_PASSWORD: z.string().min(1).optional(),
+  
+  // database fallback options
+  USE_DATABASE: z.string().transform(val => val.toLowerCase() === 'true').default('true'),
+  ENABLE_IN_MEMORY_FALLBACK: z.string().transform(val => val.toLowerCase() === 'true').default('true'),
   
   // llm providers config
   LLM_PROVIDER: z.enum(['openai', 'anthropic', 'ollama']).default('ollama'),
@@ -80,7 +86,11 @@ function parseConfig() {
       
       database: {
         supabaseUrl: rawConfig.SUPABASE_URL,
-        supabaseKey: rawConfig.SUPABASE_KEY,
+        supabaseKey: rawConfig.SUPABASE_SERVICE_KEY,
+        supabaseAnonKey: rawConfig.SUPABASE_ANON_KEY,
+        dbPassword: rawConfig.SUPABASE_DB_PASSWORD,
+        useDatabase: rawConfig.USE_DATABASE,
+        enableInMemoryFallback: rawConfig.ENABLE_IN_MEMORY_FALLBACK
       },
       
       llm: {
@@ -173,7 +183,12 @@ function parseConfig() {
       },
       database: {
         supabaseUrl: partialConfig.SUPABASE_URL,
-        supabaseKey: partialConfig.SUPABASE_KEY,
+        supabaseKey: partialConfig.SUPABASE_SERVICE_KEY,
+        supabaseAnonKey: partialConfig.SUPABASE_ANON_KEY,
+        dbPassword: partialConfig.SUPABASE_DB_PASSWORD,
+        useDatabase: partialConfig.USE_DATABASE !== undefined ? partialConfig.USE_DATABASE : true,
+        enableInMemoryFallback: partialConfig.ENABLE_IN_MEMORY_FALLBACK !== undefined ? 
+          partialConfig.ENABLE_IN_MEMORY_FALLBACK : true
       },
       llm: {
         provider: partialConfig.LLM_PROVIDER || 'ollama',
