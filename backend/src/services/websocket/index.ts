@@ -5,288 +5,346 @@
  * handles real-time message streaming between client and server.
  */
 
-import { Socket } from 'socket.io';
-import { io } from '../../index';
+import { Server as SocketIOServer, Socket } from 'socket.io';
 import logger from '../../utils/logger';
-import { llmService, ChatMessage } from '../llm';
 
-// map of user ids to their active socket connections
-const userSockets = new Map<string, Socket[]>();
-
-// map of socket ids to active stream controllers
-const activeStreams = new Map<string, Map<string, any>>();
-
-/**
- * registers a socket connection with a user id
- */
-export function registerUserSocket(userId: string, socket: Socket): void {
-  // get existing sockets for this user or create new array
-  const sockets = userSockets.get(userId) || [];
-  
-  // add this socket to the user's sockets
-  sockets.push(socket);
-  
-  // update the map
-  userSockets.set(userId, sockets);
-  
-  // create a place to store active streams for this socket
-  activeStreams.set(socket.id, new Map());
-  
-  logger.info(`user ${userId} connected with socket ${socket.id}`);
+// Temporary auth stub until we implement the full auth service
+// TODO: Replace with actual auth service import when implemented
+async function verifyToken(token: string): Promise<string | null> {
+  // Simple stub that accepts tokens in format "user_123"
+  if (token && token.startsWith('user_')) {
+    return token.substring(5);
+  }
+  return null;
 }
 
-/**
- * removes a socket from a user's registered sockets
- */
-export function removeUserSocket(userId: string, socket: Socket): void {
-  // get existing sockets
-  const sockets = userSockets.get(userId);
-  
-  if (sockets) {
-    // filter out this socket
-    const updatedSockets = sockets.filter(s => s.id !== socket.id);
-    
-    // update or remove entry
-    if (updatedSockets.length > 0) {
-      userSockets.set(userId, updatedSockets);
-    } else {
-      userSockets.delete(userId);
-    }
-  }
-  
-  // clear active streams for this socket
-  const socketStreams = activeStreams.get(socket.id);
-  if (socketStreams) {
-    // abort any active streams
-    socketStreams.forEach(stream => {
-      if (stream && stream.abort) {
-        stream.abort();
-      }
-    });
-    
-    // remove the map
-    activeStreams.delete(socket.id);
-  }
-  
-  logger.info(`user ${userId} disconnected socket ${socket.id}`);
-}
+import {
+  ChatRequestMessage,
+  CancelRequestMessage,
+  HistoryRequestMessage,
+  ClientMessage,
+  ServerMessage,
+  ChatMessage,
+  SocketData
+} from '../../types/websocket';
+
+// global socket server instance
+let io: SocketIOServer;
 
 /**
- * sends a message to all of a user's connected sockets
+ * message types for client-server communication
  */
-export function broadcastToUser(userId: string, event: string, data: any): void {
-  const sockets = userSockets.get(userId);
+export const MessageTypes = {
+  // client -> server
+  CHAT_REQUEST: 'chat_request',
+  CANCEL_REQUEST: 'cancel_request',
+  HISTORY_REQUEST: 'history_request',
+  PING: 'ping',
   
-  if (sockets && sockets.length > 0) {
-    sockets.forEach(socket => {
-      socket.emit(event, data);
-    });
-    
-    logger.debug(`broadcast ${event} to user ${userId} on ${sockets.length} sockets`);
-  }
-}
+  // server -> client
+  CHAT_RESPONSE_CHUNK: 'chat_response_chunk',
+  CHAT_RESPONSE_END: 'chat_response_end',
+  HISTORY_UPDATE: 'history_update',
+  ERROR: 'error',
+  PONG: 'pong'
+};
 
 /**
- * handles a chat request from the client
- */
-export async function handleChatRequest(
-  socket: Socket, 
-  userId: string,
-  requestId: string, 
-  messages: ChatMessage[],
-  modelId: string,
-  options: any
-): Promise<void> {
-  // get or create the map for this socket's streams
-  let socketStreams = activeStreams.get(socket.id);
-  if (!socketStreams) {
-    socketStreams = new Map();
-    activeStreams.set(socket.id, socketStreams);
-  }
-  
-  // abort any existing stream with this request id
-  if (socketStreams.has(requestId)) {
-    const existingStream = socketStreams.get(requestId);
-    if (existingStream && existingStream.abort) {
-      existingStream.abort();
-    }
-    socketStreams.delete(requestId);
-  }
-  
-  try {
-    // extract the system prompt if present
-    const systemMessages = messages.filter(m => m.role === 'system');
-    const systemPrompt = systemMessages.length > 0 ? systemMessages[0].content : undefined;
-    
-    // convert messages to a prompt string
-    const prompt = llmService.messagesToPrompt(messages.filter(m => m.role !== 'system'));
-    
-    // generate a streaming completion
-    const stream = await llmService.generateCompletion({
-      prompt,
-      model: modelId,
-      systemPrompt,
-      temperature: options?.temperature || 0.7,
-      maxTokens: options?.maxTokens,
-      topP: options?.topP,
-      stop: options?.stop,
-      context: options?.context,
-    });
-    
-    // store the stream controller
-    socketStreams.set(requestId, stream);
-    
-    // send initial response that streaming is starting
-    socket.emit('chat:start', { requestId });
-    
-    // buffer for accumulating the full response
-    let fullResponse = '';
-    
-    // handle data events (tokens from the model)
-    stream.on('data', (data: any) => {
-      socket.emit('chat:token', { 
-        requestId, 
-        token: data.response,
-        done: data.done,
-      });
-      
-      fullResponse += data.response;
-    });
-    
-    // handle the end of the stream
-    stream.on('end', (data: any) => {
-      socket.emit('chat:complete', { 
-        requestId,
-        response: fullResponse,
-        context: data.context,
-      });
-      
-      // remove from active streams
-      socketStreams.delete(requestId);
-    });
-    
-    // handle errors
-    stream.on('error', (error: any) => {
-      socket.emit('chat:error', { 
-        requestId,
-        error: error.message || 'Unknown error',
-        code: error.statusCode || 500,
-      });
-      
-      // remove from active streams
-      socketStreams.delete(requestId);
-    });
-    
-    // handle aborted streams
-    stream.on('abort', () => {
-      socket.emit('chat:abort', { requestId });
-      
-      // remove from active streams
-      socketStreams.delete(requestId);
-    });
-    
-  } catch (error: any) {
-    // handle errors in setup
-    socket.emit('chat:error', { 
-      requestId,
-      error: error.message || 'Failed to start chat',
-      code: error.statusCode || 500,
-    });
-    
-    logger.error('error in chat request', { error, userId, requestId });
-  }
-}
-
-/**
- * handles a request to stop generation
- */
-export function handleStopGeneration(
-  socket: Socket,
-  requestId: string
-): void {
-  const socketStreams = activeStreams.get(socket.id);
-  
-  if (socketStreams && socketStreams.has(requestId)) {
-    const stream = socketStreams.get(requestId);
-    
-    if (stream && stream.abort) {
-      // abort the stream
-      stream.abort();
-      
-      // remove from active streams
-      socketStreams.delete(requestId);
-      
-      // notify client
-      socket.emit('chat:abort', { requestId });
-      
-      logger.info(`stopped generation for request ${requestId}`);
-    }
-  }
-}
-
-/**
- * configure socket events
+ * sets up socket event listeners and handlers
  */
 export function setupSocketEvents(): void {
-  io.on('connection', (socket: Socket) => {
-    let userId: string | null = null;
-    
-    // authenticate socket connection
-    socket.on('auth', (data: { userId: string }) => {
-      // in a real app, verify the user id from a token
-      userId = data.userId;
+  if (!io) {
+    logger.error('socket.io server not initialized');
+    return;
+  }
+  
+  // middleware for authentication
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth.token;
       
-      // register this socket
-      registerUserSocket(userId, socket);
-      
-      // acknowledge authentication
-      socket.emit('auth:success', { userId });
-    });
-    
-    // handle chat messages
-    socket.on('chat:request', async (data: {
-      requestId: string;
-      messages: ChatMessage[];
-      modelId: string;
-      options?: any;
-    }) => {
-      if (!userId) {
-        socket.emit('auth:required');
-        return;
+      if (!token) {
+        // allow anonymous connections with limited functionality
+        socket.data.userId = null;
+        socket.data.isAuthenticated = false;
+        return next();
       }
       
-      await handleChatRequest(
-        socket,
-        userId,
-        data.requestId,
-        data.messages,
-        data.modelId,
-        data.options
-      );
-    });
-    
-    // handle stop generation requests
-    socket.on('chat:stop', (data: { requestId: string }) => {
-      if (!userId) {
-        socket.emit('auth:required');
-        return;
-      }
-      
-      handleStopGeneration(socket, data.requestId);
-    });
-    
-    // handle disconnection
-    socket.on('disconnect', () => {
+      const userId = await verifyToken(token);
       if (userId) {
-        removeUserSocket(userId, socket);
+        socket.data.userId = userId;
+        socket.data.isAuthenticated = true;
+        return next();
       }
-    });
+      
+      return next(new Error('authentication failed'));
+    } catch (error) {
+      logger.error('socket authentication error', { originalError: error });
+      return next(new Error('authentication error'));
+    }
   });
   
-  logger.info('websocket events configured');
+  // connection handler
+  io.on('connection', handleConnection);
+  
+  logger.info('websocket event handlers initialized');
 }
 
-// export the setup function
+/**
+ * handles new socket connections
+ */
+function handleConnection(socket: Socket): void {
+  const authStatus = socket.data.isAuthenticated ? 'authenticated' : 'anonymous';
+  logger.info(`client connected: ${socket.id} (${authStatus})`);
+  
+  // setup event listeners
+  setupSocketListeners(socket);
+  
+  // setup reconnection info
+  sendReconnectionInfo(socket);
+  
+  // handle disconnection
+  socket.on('disconnect', () => {
+    logger.info(`client disconnected: ${socket.id}`);
+    // cleanup any active processes for this socket
+    cancelActiveRequests(socket.id);
+  });
+}
+
+/**
+ * sets up event listeners for a socket
+ */
+function setupSocketListeners(socket: Socket): void {
+  // heartbeat
+  socket.on(MessageTypes.PING, () => {
+    socket.emit(MessageTypes.PONG);
+  });
+  
+  // chat request
+  socket.on(MessageTypes.CHAT_REQUEST, async (data: ChatRequestMessage) => {
+    try {
+      await handleChatRequest(socket, data);
+    } catch (error) {
+      logger.error('error handling chat request', { socketId: socket.id, originalError: error });
+      socket.emit(MessageTypes.ERROR, { 
+        type: MessageTypes.ERROR,
+        message: 'failed to process chat request',
+        code: 'chat_processing_error'
+      });
+    }
+  });
+  
+  // cancel request
+  socket.on(MessageTypes.CANCEL_REQUEST, (data: CancelRequestMessage) => {
+    try {
+      cancelRequest(socket.id, data.requestId);
+    } catch (error) {
+      logger.error('error cancelling request', { socketId: socket.id, originalError: error });
+      socket.emit(MessageTypes.ERROR, { 
+        type: MessageTypes.ERROR,
+        message: 'failed to cancel request',
+        code: 'cancel_error'
+      });
+    }
+  });
+  
+  // history request
+  socket.on(MessageTypes.HISTORY_REQUEST, async (data: HistoryRequestMessage) => {
+    try {
+      await handleHistoryRequest(socket, data);
+    } catch (error) {
+      logger.error('error handling history request', { socketId: socket.id, originalError: error });
+      socket.emit(MessageTypes.ERROR, { 
+        type: MessageTypes.ERROR,
+        message: 'failed to fetch chat history',
+        code: 'history_error'
+      });
+    }
+  });
+}
+
+/**
+ * sends reconnection info to client
+ */
+function sendReconnectionInfo(socket: Socket): void {
+  socket.emit('connection_info', {
+    clientId: socket.id,
+    reconnectBackoff: {
+      initialDelay: 1000,
+      maxDelay: 30000,
+      factor: 1.5
+    }
+  });
+}
+
+/**
+ * map to track active requests by socket and request id
+ * note: for future scaling, this would move to redis for multi-server support
+ */
+const activeRequests = new Map<string, Set<string>>();
+
+/**
+ * handles incoming chat requests
+ */
+async function handleChatRequest(
+  socket: Socket, 
+  data: ChatRequestMessage
+): Promise<void> { // TODO: add actual llm service integration here
+  const { content, conversationId, parentMessageId, model } = data;
+  const requestId = generateRequestId();
+  
+  // track this request
+  trackRequest(socket.id, requestId);
+  
+  // validation
+  if (!content) {
+    socket.emit(MessageTypes.ERROR, { 
+      type: MessageTypes.ERROR,
+      message: 'message content is required',
+      code: 'invalid_request'
+    });
+    return;
+  }
+  
+  // todo: implement actual llm service integration here
+  // for now, just echo back the request with simulated chunks
+  
+  // simulate streaming chunks
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
+    
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'This is ',
+      conversationId
+    });
+  }, 500);
+  
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
+    
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'a simulated ',
+      conversationId
+    });
+  }, 1000);
+  
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
+    
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'response from the LLM service.',
+      conversationId
+    });
+    
+    // signal end of response
+    socket.emit(MessageTypes.CHAT_RESPONSE_END, {
+      requestId,
+      conversationId
+    });
+    
+    // cleanup request tracking
+    untrackRequest(socket.id, requestId);
+  }, 1500);
+}
+
+/**
+ * handles history requests
+ */
+async function handleHistoryRequest(socket: Socket, data: HistoryRequestMessage): Promise<void> {
+  const { conversationId } = data;
+  
+  // todo: implement actual history fetching from database
+  // for now, return mock history
+  
+  socket.emit(MessageTypes.HISTORY_UPDATE, {
+    conversationId,
+    messages: [
+      {
+        id: 'mock-msg-1',
+        role: 'user',
+        content: 'Hello, how are you?',
+        timestamp: Date.now() - 60000
+      },
+      {
+        id: 'mock-msg-2',
+        role: 'assistant',
+        content: 'I am doing well, thank you for asking.',
+        timestamp: Date.now() - 55000
+      }
+    ]
+  });
+}
+
+/**
+ * cancels a specific request
+ */
+function cancelRequest(socketId: string, requestId: string): void {
+  if (isRequestActive(socketId, requestId)) {
+    untrackRequest(socketId, requestId);
+    logger.info(`request cancelled: ${requestId} for socket ${socketId}`);
+    
+    // todo: notify llm service to stop processing
+  }
+}
+
+/**
+ * cancels all active requests for a socket
+ */
+function cancelActiveRequests(socketId: string): void {
+  if (activeRequests.has(socketId)) {
+    activeRequests.delete(socketId);
+    logger.info(`all requests cancelled for disconnected socket: ${socketId}`);
+    
+    // todo: notify llm service to stop processing all requests from this socket
+  }
+}
+
+/**
+ * tracks an active request
+ */
+function trackRequest(socketId: string, requestId: string): void {
+  if (!activeRequests.has(socketId)) {
+    activeRequests.set(socketId, new Set());
+  }
+  activeRequests.get(socketId)?.add(requestId);
+}
+
+/**
+ * untracks a request when complete or cancelled
+ */
+function untrackRequest(socketId: string, requestId: string): void {
+  activeRequests.get(socketId)?.delete(requestId);
+  if (activeRequests.get(socketId)?.size === 0) {
+    activeRequests.delete(socketId);
+  }
+}
+
+/**
+ * checks if a request is currently active
+ */
+function isRequestActive(socketId: string, requestId: string): boolean {
+  return activeRequests.get(socketId)?.has(requestId) ?? false;
+}
+
+/**
+ * generates a unique request id
+ */
+function generateRequestId(): string {
+  return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+}
+
+/**
+ * sets the socket.io server instance
+ */
+export function setSocketServer(socketServer: SocketIOServer): void {
+  io = socketServer;
+  logger.info('socket.io server instance set in websocket service');
+}
+
 export default {
   setupSocketEvents,
+  setSocketServer
 }; 

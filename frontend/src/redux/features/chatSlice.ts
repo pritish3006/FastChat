@@ -1,12 +1,7 @@
 /**
- * chat slice - core state management for the entire chat functionality
- * 
- * what it manages:
- * - chat sessions and messages
- * - message streaming states
- * - branch creation and navigation
- * - model selection
- * - ui states like sidebar visibility
+ * chat slice 🔥
+ * handles all our chat stuff - sessions, messages, models & ui state
+ * built with @reduxjs/toolkit + typescript
  */
 
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
@@ -14,12 +9,15 @@ import { ChatState, Message, ChatSession, Model, MessageBranch } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
- * initial state with empty chats and default settings
+ * initial state check:
+ * - empty sessions array
+ * - no current chat selected
+ * - gpt-4 set as default model - this will be replaced with the actual model id from the backend
  */
 const initialState: ChatState = {
   sessions: [],
   currentSessionId: null,
-  // models available in the app
+  // TODO: replace with actual models from the backend
   availableModels: [
     { id: 'gpt-4', name: 'GPT-4', isActive: true },
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', isActive: false },
