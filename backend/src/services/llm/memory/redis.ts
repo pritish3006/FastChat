@@ -24,6 +24,7 @@ export class RedisManager {
     branchMessages: (branchId: string) => `${this.keyPrefix}branch:${branchId}:messages`,
     lock: (key: string) => `${this.keyPrefix}lock:${key}`,
     processingQueue: (sessionId: string) => `${this.keyPrefix}queue:${sessionId}`,
+    messageVersions: (messageId: string) => `${this.keyPrefix}messageVersions:${messageId}`,
   };
 
   constructor(config: RedisConfig) {

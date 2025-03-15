@@ -198,7 +198,16 @@ export class TokenCounter {
     try {
       const tokenizer = await this.getTokenizer(options.model);
       const encoded = await tokenizer.encode(text);
-      return encoded.getIds().length;
+      const tokenCount = encoded.getIds().length;
+      
+      // Log token count
+      logger.info('Token count', {
+        textLength: text.length,
+        tokenCount,
+        model: options.model
+      });
+      
+      return tokenCount;
     } catch (error) {
       logger.warn('Tokenization failed, using fallback:', error);
       // Fallback to rough character estimate if tokenization fails
@@ -217,13 +226,28 @@ export class TokenCounter {
     // Get base token count for all message content
     let totalTokens = 0;
     for (const message of messages) {
-      totalTokens += await this.countTokens(message.content, { model });
+      const messageTokenCount = await this.countTokens(message.content, { model });
+      totalTokens += messageTokenCount;
       // Add overhead for message role
       totalTokens += 4; // Approximate overhead per message
+
+      // Log token count for each message
+      logger.info('Message token count', {
+        role: message.role,
+        contentLength: message.content.length,
+        messageTokenCount,
+        model
+      });
     }
     
     // Add overhead for conversation formatting
     totalTokens += 2; // Approximate overhead for conversation
+    
+    // Log total token count for conversation
+    logger.info('Total conversation token count', {
+      totalTokens,
+      model
+    });
     
     return totalTokens;
   }

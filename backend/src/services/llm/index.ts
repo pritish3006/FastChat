@@ -23,6 +23,7 @@ import { EmbeddingService } from './memory/embedding';
 import { DEFAULT_MEMORY_CONFIG } from './memory/config';
 import { TokenCounter, TokenTracker } from './tokens';
 import { v4 as uuidv4 } from 'uuid';
+import { TokenLogger } from './tokens/tokenLogger';
 
 // generic model interface for any provider
 export interface Model {
@@ -194,6 +195,7 @@ export class LLMService {
   private memoryManager: MemoryManager;
   private tokenCounter: TokenCounter;
   private tokenTracker: TokenTracker;
+  private tokenLogger: TokenLogger;
 
   constructor(config: LLMServiceConfig) {
     this.config = config;
@@ -259,6 +261,9 @@ export class LLMService {
           enableRateLimiting: false  // As per your requirement, no rate limiting based on tokens
         }
       );
+
+      // Initialize token logger with Supabase client
+      this.tokenLogger = new TokenLogger(this.memoryManager.getSupabaseClient());
     }
   }
 
@@ -387,8 +392,8 @@ export class LLMService {
     const session = await this.getOrCreateSession(params.sessionId);
     params.sessionId = session.id;
 
-    // Assemble context
-    const context = await this.assembleContext(params);
+    // Assemble context using ContextManager
+    const context = await this.memoryManager.assembleContext(params);
 
     // Create user message ID
     const messageId = uuidv4();
@@ -433,7 +438,7 @@ export class LLMService {
       }
     };
 
-    // Save user message
+    // Store user message using MemoryManager
     if (this.memoryManager) {
       await this.memoryManager.storeMessage(userMessage);
     }
@@ -481,7 +486,7 @@ export class LLMService {
         }
       };
       
-      // Save assistant message
+      // Store assistant message using MemoryManager
       if (this.memoryManager) {
         await this.memoryManager.storeMessage(assistantMessage);
       }
@@ -541,6 +546,23 @@ export class LLMService {
       if (this.tokenTracker) {
         await this.tokenTracker.trackMessageTokens(message, this.config.model.modelId);
       }
+
+      // Log token count to Supabase if tokenLogger is available
+      if (this.tokenLogger) {
+        await this.tokenLogger.logTokenCount({
+          session_id: message.sessionId,
+          user_id: message.metadata?.userId || 'anonymous',
+          message_id: message.id,
+          role: message.role,
+          text_length: message.content.length,
+          token_count: tokens,
+          model: this.config.model.modelId,
+          metadata: {
+            ...message.metadata,
+            persistedAt: Date.now()
+          }
+        });
+      }
     } catch (error) {
       logger.error(`Error processing message: ${error}`, { messageId: message.id });
     }
@@ -595,18 +617,32 @@ export class LLMService {
   }
 
   /**
-   * Get token usage for a session
+   * Get token usage for a session with Supabase integration
    */
   async getSessionTokenUsage(sessionId: string): Promise<{ 
     prompt: number; 
     completion: number; 
     total: number; 
   }> {
-    if (!this.tokenTracker) {
-      return { prompt: 0, completion: 0, total: 0 };
+    if (this.tokenLogger) {
+      try {
+        const usage = await this.tokenLogger.getSessionTokenUsage(sessionId);
+        return {
+          prompt: usage.prompt_tokens,
+          completion: usage.completion_tokens,
+          total: usage.total_tokens
+        };
+      } catch (error) {
+        logger.error(`Error getting session token usage from Supabase: ${error}`);
+      }
     }
     
-    return this.tokenTracker.getSessionTokenUsage(sessionId);
+    // Fallback to Redis-based token tracking
+    if (this.tokenTracker) {
+      return this.tokenTracker.getSessionTokenUsage(sessionId);
+    }
+    
+    return { prompt: 0, completion: 0, total: 0 };
   }
   
   /**
@@ -650,5 +686,19 @@ export class LLMService {
     if (this.memoryManager) {
       await this.memoryManager.cleanup();
     }
+  }
+
+  /**
+   * Get token usage analytics
+   */
+  async getTokenUsageAnalytics(
+    interval: 'hour' | 'day' | 'week' | 'month' = 'day',
+    startDate?: Date,
+    endDate?: Date
+  ) {
+    if (this.tokenLogger) {
+      return this.tokenLogger.getTokenUsageAnalytics(interval, startDate, endDate);
+    }
+    return [];
   }
 } 

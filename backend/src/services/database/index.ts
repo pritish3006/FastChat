@@ -320,7 +320,7 @@ export const messages = {
         parent_message_id: message.parentMessageId || null
       };
       
-      const data = await withRetry(
+      const data = await withRetry<Database['public']['Tables']['messages']['Row']>(
         () => supabase
           .from('messages')
           .insert(newMessage)
