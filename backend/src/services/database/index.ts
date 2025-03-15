@@ -6,7 +6,8 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import supabase, { adminSupabase } from './supabase';
+import supabase, { adminSupabase, withRetry, Database } from './supabase';
+import { cacheManager } from './cache';
 import logger from '../../utils/logger';
 import { ApiError } from '../../middleware/errorHandler';
 import config from '../../config';
@@ -99,15 +100,16 @@ export const chatSessions = {
         model_id: session.modelId
       };
       
-      const { data, error } = await supabase
-        .from('chat_sessions')
-        .insert(newSession)
-        .select('*')
-        .single();
-      
-      if (error) throw error;
-      
-      return {
+      const data = await withRetry<Database['public']['Tables']['chat_sessions']['Row']>(
+        () => supabase
+          .from('chat_sessions')
+          .insert(newSession)
+          .select('*')
+          .single(),
+        'create session'
+      ) as Database['public']['Tables']['chat_sessions']['Row'];
+
+      const createdSession = {
         id: data.id,
         userId: data.user_id,
         title: data.title,
@@ -115,6 +117,11 @@ export const chatSessions = {
         createdAt: data.created_at,
         updatedAt: data.updated_at
       };
+
+      // Cache the new session
+      cacheManager.sessions.set(data.id, createdSession);
+      
+      return createdSession;
     } catch (error) {
       handleDatabaseError(error, 'create session', { 
         userId: session.userId, 
@@ -134,25 +141,31 @@ export const chatSessions = {
         return session || null;
       }
       
-      const { data, error } = await supabase
-        .from('chat_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .single();
-      
-      if (error) {
-        if (error.code === 'PGRST116') return null; // not found
-        throw error;
-      }
-      
-      return data ? {
-        id: data.id,
-        userId: data.user_id,
-        title: data.title,
-        modelId: data.model_id,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at
-      } : null;
+      // Try to get from cache first
+      return await cacheManager.sessions.getOrSet(
+        sessionId,
+        async () => {
+          const data = await withRetry<Database['public']['Tables']['chat_sessions']['Row']>(
+            () => supabase
+              .from('chat_sessions')
+              .select('*')
+              .eq('id', sessionId)
+              .single(),
+            'get session by id'
+          );
+
+          if (!data) return null;
+
+          return {
+            id: data.id,
+            userId: data.user_id,
+            title: data.title,
+            modelId: data.model_id,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at
+          };
+        }
+      );
     } catch (error) {
       handleDatabaseError(error, 'get session by id', { sessionId });
     }
@@ -259,12 +272,17 @@ export const chatSessions = {
         return;
       }
       
-      const { error } = await supabase
-        .from('chat_sessions')
-        .delete()
-        .eq('id', sessionId);
-      
-      if (error) throw error;
+      await withRetry(
+        () => supabase
+          .from('chat_sessions')
+          .delete()
+          .eq('id', sessionId),
+        'delete session'
+      );
+
+      // Invalidate caches
+      cacheManager.sessions.delete(sessionId);
+      cacheManager.messages.deleteByPrefix(`session:${sessionId}`);
     } catch (error) {
       handleDatabaseError(error, 'delete session', { sessionId });
     }
@@ -302,15 +320,16 @@ export const messages = {
         parent_message_id: message.parentMessageId || null
       };
       
-      const { data, error } = await supabase
-        .from('messages')
-        .insert(newMessage)
-        .select('*')
-        .single();
-      
-      if (error) throw error;
-      
-      return {
+      const data = await withRetry(
+        () => supabase
+          .from('messages')
+          .insert(newMessage)
+          .select('*')
+          .single(),
+        'create message'
+      );
+
+      const createdMessage = {
         id: data.id,
         sessionId: data.session_id,
         content: data.content,
@@ -319,9 +338,12 @@ export const messages = {
         parentMessageId: data.parent_message_id,
         createdAt: data.created_at
       };
+
+      // Cache the new message
+      cacheManager.messages.set(`message:${data.id}`, createdMessage);
+      
+      return createdMessage;
     } catch (error) {
-      // Don't completely fail the application, just log the error
-      // This is especially important for chat functionality to continue working
       logger.error('Failed to save message', { 
         error: error instanceof Error ? error.message : String(error),
         sessionId: message.sessionId
@@ -357,23 +379,31 @@ export const messages = {
           });
       }
       
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('session_id', sessionId)
-        .order('created_at', { ascending: true });
-      
-      if (error) throw error;
-      
-      return data.map(message => ({
-        id: message.id,
-        sessionId: message.session_id,
-        content: message.content,
-        role: message.role,
-        branchId: message.branch_id,
-        parentMessageId: message.parent_message_id,
-        createdAt: message.created_at
-      }));
+      // Try to get from cache first
+      return await cacheManager.messages.getOrSet(
+        `session:${sessionId}:messages`,
+        async () => {
+          const data = await withRetry(
+            () => supabase
+              .from('messages')
+              .select('*')
+              .eq('session_id', sessionId)
+              .order('created_at', { ascending: true }),
+            'get session messages'
+          );
+
+          return data.map(message => ({
+            id: message.id,
+            sessionId: message.session_id,
+            content: message.content,
+            role: message.role,
+            branchId: message.branch_id,
+            parentMessageId: message.parent_message_id,
+            createdAt: message.created_at
+          }));
+        },
+        { forceFresh: false } // Allow using cache
+      );
     } catch (error) {
       logger.error('Failed to get session messages', { 
         error: error instanceof Error ? error.message : String(error),
