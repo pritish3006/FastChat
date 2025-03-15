@@ -12,6 +12,8 @@ import { chatLimiter } from '../middleware/rateLimiter';
 import { chatSessions, messages as dbMessages } from '../services/database';
 import { ApiError } from '../middleware/errorHandler';
 import logger from '../utils/logger';
+import { LLMService } from '../services/llm';
+import { config } from '../config';
 
 const router = Router();
 
@@ -150,6 +152,88 @@ router.delete('/sessions/:sessionId', async (req, res, next) => {
   } catch (error) {
     logger.error(error instanceof Error ? error : new Error('error deleting chat session'), { sessionId: req.params.sessionId });
     next(error instanceof ApiError ? error : new ApiError(500, 'failed to delete chat session'));
+  }
+});
+
+// New route: semantic search in session history
+router.post('/search/:sessionId', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { query, limit = 5, threshold = 0.7 } = req.body;
+    
+    if (!query || typeof query !== 'string') {
+      return next(new ApiError(400, 'search query is required'));
+    }
+    
+    // only allow authenticated users to search in history
+    if (!req.user) {
+      return next(new ApiError(401, 'authentication required to search chat history'));
+    }
+    
+    // get session to verify ownership
+    const session = await chatSessions.getById(sessionId);
+    
+    if (!session) {
+      return next(new ApiError(404, 'chat session not found'));
+    }
+    
+    // verify user owns this session
+    if (session.userId !== req.user.id) {
+      return next(new ApiError(403, 'you do not have permission to access this chat session'));
+    }
+    
+    // Create an LLM service instance
+    const llmService = new LLMService({
+      model: {
+        provider: 'ollama',
+        modelId: session.modelId || config.llm.defaultModel,
+        baseUrl: config.llm.ollamaEndpoint
+      },
+      memory: {
+        redisUrl: config.redis.url,
+        vectorStore: {
+          type: 'supabase',
+          supabaseUrl: config.database.supabaseUrl,
+          supabaseKey: config.database.supabaseKey,
+          embeddingModel: 'llama3'
+        }
+      }
+    });
+    
+    // Initialize the service
+    await llmService.initialize();
+    
+    try {
+      // Perform semantic search
+      const similarMessages = await llmService.findSimilarMessages(
+        sessionId,
+        query,
+        {
+          limit: Number(limit) || 5,
+          threshold: Number(threshold) || 0.7
+        }
+      );
+      
+      res.json({
+        success: true,
+        results: similarMessages.map(msg => ({
+          id: msg.id,
+          content: msg.content,
+          role: msg.role,
+          timestamp: msg.timestamp,
+          similarity: msg.metadata?.similarity || null
+        }))
+      });
+    } finally {
+      // Clean up resources
+      await llmService.shutdown();
+    }
+  } catch (error) {
+    logger.error('error searching chat history', { 
+      sessionId: req.params.sessionId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    next(error instanceof ApiError ? error : new ApiError(500, 'failed to search chat history'));
   }
 });
 

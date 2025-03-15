@@ -9,17 +9,81 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { llmService, ChatMessage } from '../services/llm';
+import { llmService as legacyLlmService, ChatMessage } from '../services/llm';
+import { LLMService } from '../services/llm';
 import { chatSessions, messages } from '../services/database';
 import { ApiError } from '../middleware/errorHandler';
 import { io } from '../index';
 import logger from '../utils/logger';
+import { config } from '../config';
 
 // active stream controllers by request id
 const activeStreams = new Map<string, any>();
 
 // in-memory fallback for chat history when session can't be loaded
 const fallbackSessionHistory = new Map<string, ChatMessage[]>();
+
+// LLM service instances cache to avoid creating new instances for every request
+const llmServiceCache = new Map<string, { service: LLMService, lastUsed: number }>();
+
+// Cleanup service instances that haven't been used in 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  const staleTimeout = 5 * 60 * 1000; // 5 minutes
+  
+  for (const [modelId, entry] of llmServiceCache.entries()) {
+    if (now - entry.lastUsed > staleTimeout) {
+      entry.service.shutdown().catch(err => {
+        logger.warn('Error shutting down stale LLM service', {
+          modelId,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      });
+      llmServiceCache.delete(modelId);
+    }
+  }
+}, 60 * 1000); // Check every minute
+
+// Get or create an LLM service instance
+async function getLLMService(modelId: string): Promise<LLMService> {
+  const cacheKey = modelId || config.llm.defaultModel;
+  
+  // Check if we have a cached instance
+  if (llmServiceCache.has(cacheKey)) {
+    const entry = llmServiceCache.get(cacheKey)!;
+    entry.lastUsed = Date.now();
+    return entry.service;
+  }
+  
+  // Create new instance with vector store support
+  const service = new LLMService({
+    model: {
+      provider: 'ollama',
+      modelId: cacheKey,
+      baseUrl: config.llm.ollamaEndpoint
+    },
+    memory: {
+      redisUrl: config.redis.url,
+      vectorStore: config.database.supabaseUrl && config.database.supabaseKey ? {
+        type: 'supabase',
+        supabaseUrl: config.database.supabaseUrl,
+        supabaseKey: config.database.supabaseKey,
+        embeddingModel: config.llm.embeddingModel || cacheKey
+      } : undefined
+    }
+  });
+  
+  // Initialize the service
+  await service.initialize();
+  
+  // Cache the instance
+  llmServiceCache.set(cacheKey, {
+    service,
+    lastUsed: Date.now()
+  });
+  
+  return service;
+}
 
 // validate message request schema
 const messageSchema = z.object({
@@ -69,7 +133,7 @@ export const sendMessage = async (req: Request, res: Response, next: NextFunctio
         const newSession = await chatSessions.create({
           userId: req.user.id,
           title: message.substring(0, 50),
-          modelId: model || 'llama3'
+          modelId: model || config.llm.defaultModel
         });
         actualSessionId = newSession.id;
       } catch (error) {
@@ -80,105 +144,6 @@ export const sendMessage = async (req: Request, res: Response, next: NextFunctio
           userId
         });
         actualSessionId = `temp-${uuidv4()}`;
-      }
-    }
-    
-    // prepare messages array for the LLM
-    const allMessages: ChatMessage[] = [];
-    
-    // use provided history or fetch from database
-    if (history) {
-      allMessages.push(...history);
-    } else if (actualSessionId) {
-      try {
-        // fetch history from database if session exists
-        const sessionMessages = await messages.getBySessionId(actualSessionId);
-        
-        if (sessionMessages.length > 0) {
-          for (const msg of sessionMessages) {
-            allMessages.push({
-              role: msg.role,
-              content: msg.content
-            });
-          }
-          
-          // Cache the history for fallback if needed
-          fallbackSessionHistory.set(actualSessionId, [...sessionMessages]);
-        } else if (fallbackSessionHistory.has(actualSessionId)) {
-          // Use cached history if database returned empty but we have a cached version
-          const cachedMessages = fallbackSessionHistory.get(actualSessionId) || [];
-          allMessages.push(...cachedMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })));
-          
-          logger.info('Using cached message history', { 
-            sessionId: actualSessionId,
-            messageCount: cachedMessages.length
-          });
-        }
-      } catch (error) {
-        // If we can't fetch messages, try using the in-memory fallback
-        logger.warn('Failed to fetch session messages, using fallback if available', {
-          error: error instanceof Error ? error.message : String(error),
-          sessionId: actualSessionId
-        });
-        
-        if (fallbackSessionHistory.has(actualSessionId)) {
-          const cachedMessages = fallbackSessionHistory.get(actualSessionId) || [];
-          allMessages.push(...cachedMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })));
-          
-          logger.info('Using cached message history after DB error', { 
-            sessionId: actualSessionId,
-            messageCount: cachedMessages.length
-          });
-        }
-      }
-    }
-    
-    // add the new user message
-    allMessages.push({
-      role: 'user',
-      content: message
-    });
-    
-    // save the user message to database if we have a session
-    if (actualSessionId) {
-      try {
-        const savedMessage = await messages.create({
-          sessionId: actualSessionId,
-          content: message,
-          role: 'user'
-        });
-        
-        // Update our in-memory cache
-        if (!fallbackSessionHistory.has(actualSessionId)) {
-          fallbackSessionHistory.set(actualSessionId, []);
-        }
-        fallbackSessionHistory.get(actualSessionId)?.push(savedMessage);
-      } catch (error) {
-        logger.warn('Failed to save user message to database', {
-          error: error instanceof Error ? error.message : String(error),
-          sessionId: actualSessionId
-        });
-        
-        // Still update our in-memory cache
-        if (!fallbackSessionHistory.has(actualSessionId)) {
-          fallbackSessionHistory.set(actualSessionId, []);
-        }
-        
-        const tempMessage = {
-          id: uuidv4(),
-          sessionId: actualSessionId,
-          content: message,
-          role: 'user',
-          createdAt: new Date().toISOString()
-        };
-        
-        fallbackSessionHistory.get(actualSessionId)?.push(tempMessage);
       }
     }
     
@@ -199,7 +164,7 @@ export const sendMessage = async (req: Request, res: Response, next: NextFunctio
     res.write(`data: ${JSON.stringify({
       type: 'metadata',
       request_id: requestId,
-      model: model || 'llama3',
+      model: model || config.llm.defaultModel,
       session_id: actualSessionId
     })}\n\n`);
     
@@ -221,164 +186,133 @@ export const sendMessage = async (req: Request, res: Response, next: NextFunctio
       }
     });
     
-    // Modified: direct use of LLM service with proper message format
-    const stream = await llmService.generateCompletion({
-      modelId: model || 'llama3',
-      messages: allMessages,
-      options: options || {},
-      userId: userId,
-      conversationId: actualSessionId,
-      streaming: true
-    });
+    // Get or create an LLM service instance
+    const llmService = await getLLMService(model || config.llm.defaultModel);
     
-    // store stream controller for potential cancellation
-    activeStreams.set(requestId, stream);
-    
-    // accumulate full response
-    let fullResponse = '';
-    
-    // handle data events (chunks)
-    stream.onData((chunk) => {
-      try {
-        // append to full response
-        fullResponse += chunk.content;
-        
-        // send chunk to client
-        const chunkData = JSON.stringify({
-          type: 'content',
-          content: chunk.content
-        });
-        
-        res.write(`data: ${chunkData}\n\n`);
-        
-        // Force flush the response
-        if (res.flush) {
-          res.flush();
-        }
-      } catch (error) {
-        logger.error('Error processing stream chunk', {
-          error: error instanceof Error ? error.message : String(error),
-          requestId
-        });
-      }
-    });
-    
-    // handle end of stream
-    stream.onEnd((usage) => {
-      try {
-        // send completion message
-        res.write(`data: ${JSON.stringify({
-          type: 'done',
-          content: fullResponse,
-          usage: usage || null
-        })}\n\n`);
-        
-        // save assistant message to database if we have a session
-        if (actualSessionId) {
-          messages.create({
-            sessionId: actualSessionId,
-            content: fullResponse,
-            role: 'assistant'
-          }).then(savedMessage => {
-            // Update our in-memory cache
-            if (!fallbackSessionHistory.has(actualSessionId)) {
-              fallbackSessionHistory.set(actualSessionId, []);
-            }
-            fallbackSessionHistory.get(actualSessionId)?.push(savedMessage);
-          }).catch(error => {
-            logger.error('Failed to save response to database', {
-              error: error instanceof Error ? error.message : String(error),
-              requestId,
-              sessionId: actualSessionId
-            });
-            
-            // Still update our in-memory cache
-            if (!fallbackSessionHistory.has(actualSessionId)) {
-              fallbackSessionHistory.set(actualSessionId, []);
-            }
-            
-            const tempMessage = {
-              id: uuidv4(),
-              sessionId: actualSessionId,
-              content: fullResponse,
-              role: 'assistant',
-              createdAt: new Date().toISOString()
-            };
-            
-            fallbackSessionHistory.get(actualSessionId)?.push(tempMessage);
-          });
-        }
-        
-        // remove stream controller
-        activeStreams.delete(requestId);
-        
-        // log completion
-        logger.info('Stream completed successfully', {
-          requestId,
-          responseLength: fullResponse.length,
-          tokensUsed: usage?.totalTokens || 0
-        });
-        
-        // end response
-        res.end();
-      } catch (error) {
-        logger.error('Error ending stream', {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-          requestId
-        });
-        
-        // attempt to end the response
+    // Create streaming callbacks
+    const callbacks = {
+      onToken: (token: string) => {
         try {
-          res.end();
-        } catch (endError) {
-          logger.error('Error ending response after stream end error', {
-            error: endError instanceof Error ? endError.message : String(endError),
-            requestId
+          const chunkData = JSON.stringify({
+            type: 'content',
+            content: token
+          });
+          res.write(`data: ${chunkData}\n\n`);
+          
+          // Force flush to avoid buffering
+          if (res.flush) {
+            res.flush();
+          }
+        } catch (error) {
+          logger.error('Error sending chunk', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error)
           });
         }
+      },
+      onStart: () => {
+        try {
+          const startData = JSON.stringify({
+            type: 'start',
+            timestamp: Date.now()
+          });
+          res.write(`data: ${startData}\n\n`);
+          
+          if (res.flush) {
+            res.flush();
+          }
+        } catch (error) {
+          logger.error('Error sending start event', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      },
+      onComplete: () => {
+        try {
+          const completeData = JSON.stringify({
+            type: 'done',
+            timestamp: Date.now()
+          });
+          res.write(`data: ${completeData}\n\n`);
+          res.end();
+        } catch (error) {
+          logger.error('Error sending complete event', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          res.end();
+        }
+      },
+      onError: (error: Error) => {
+        try {
+          const errorData = JSON.stringify({
+            type: 'error',
+            error: error.message
+          });
+          res.write(`data: ${errorData}\n\n`);
+          res.end();
+        } catch (streamError) {
+          logger.error('Error sending error event', {
+            requestId,
+            originalError: error.message,
+            streamError: streamError instanceof Error ? streamError.message : String(streamError)
+          });
+          res.end();
+        }
       }
+    };
+    
+    try {
+      // Using the new LLM service to chat with vector store support
+      const response = await llmService.chat({
+        sessionId: actualSessionId,
+        message: message,
+        systemPrompt: options?.systemPrompt,
+        callbacks: callbacks
+      });
+      
+      // Add token usage headers if available
+      if (response.metadata?.tokens) {
+        res.setHeader('X-Tokens-Prompt', response.metadata.tokens.prompt);
+        res.setHeader('X-Tokens-Completion', response.metadata.tokens.completion);
+        res.setHeader('X-Tokens-Total', response.metadata.tokens.total);
+      }
+      
+    } catch (error) {
+      logger.error('error generating completion', {
+        error: error instanceof Error ? error.message : String(error),
+        requestId,
+        model: model || config.llm.defaultModel
+      });
+      
+      // try to send error to client
+      try {
+        const errorData = JSON.stringify({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Error generating completion'
+        });
+        res.write(`data: ${errorData}\n\n`);
+      } catch (writeError) {
+        logger.error('Failed to write error to stream', {
+          requestId,
+          error: writeError instanceof Error ? writeError.message : String(writeError)
+        });
+      }
+      
+      // end the response
+      res.end();
+    }
+    
+  } catch (error) {
+    // This catches validation errors and other issues before streaming starts
+    logger.error('chat request error', {
+      error: error instanceof Error ? error.message : String(error)
     });
     
-    // handle errors
-    stream.onError((error) => {
-      try {
-        logger.error('Stream error', {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-          requestId
-        });
-        
-        // send error to client
-        res.write(`data: ${JSON.stringify({
-          type: 'error',
-          error: error instanceof Error ? error.message : String(error),
-          code: error.statusCode || 500
-        })}\n\n`);
-        
-        // remove stream controller
-        activeStreams.delete(requestId);
-        
-        // end response
-        res.end();
-      } catch (endError) {
-        logger.error('Error ending response after stream error', {
-          error: endError instanceof Error ? endError.message : String(endError),
-          requestId
-        });
-      }
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      logger.warn('Invalid request data', { errors: error.errors });
-      next(new ApiError(400, 'invalid request data', { context: { errors: error.errors } }));
-    } else {
-      logger.error('Error processing message', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      next(error instanceof ApiError ? error : new ApiError(500, 'failed to process message'));
-    }
+    next(error instanceof ApiError 
+      ? error 
+      : new ApiError(400, error instanceof Error ? error.message : 'invalid chat request'));
   }
 };
 
@@ -389,7 +323,7 @@ export const getModels = async (req: Request, res: Response, next: NextFunction)
   try {
     // Directly use the LLM service to fetch models
     // This bypasses any Supabase dependency
-    const models = await llmService.listModels();
+    const models = await legacyLlmService.listModels();
     
     // Log success for debugging
     logger.info('Successfully fetched models from llm service', { 
@@ -492,7 +426,7 @@ export const sendMessageNonStreaming = async (req: Request, res: Response, next:
     
     // Use a Promise to collect the full response
     let fullResponse = '';
-    const stream = await llmService.generateCompletion(request);
+    const stream = await legacyLlmService.generateCompletion(request);
     
     // Set up promise to wait for response
     const responsePromise = new Promise<string>((resolve, reject) => {

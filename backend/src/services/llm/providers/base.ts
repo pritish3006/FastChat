@@ -28,11 +28,6 @@ export abstract class BaseProvider implements BaseModelProvider {
         throw new Error('Top P must be between 0 and 1');
       }
     }
-
-    // Validate maxTokens
-    if (config.maxTokens !== undefined && config.maxTokens <= 0) {
-      throw new Error('Max tokens must be greater than 0');
-    }
   }
 
   protected validateProviderSpecificConfig(_config: ModelConfig): void {

@@ -41,5 +41,10 @@
   "homepage": "https://github.com/pritish3006/FastChat#readme",
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "dotenv": "^16.4.7",
+    "uuid": "^11.1.0"
   }
-} 
+}

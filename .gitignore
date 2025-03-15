@@ -34,9 +34,26 @@ Thumbs.db
 
 # development tools and documentation
 .cursorrules
+.cursor/
 .notes/
 MONOREPO.md
 UI-ideas/
 *.todo
 TODO.md
 NOTES.md 
+
+# test and verification scripts
+verify-*.js
+run-migration.js
+**/scripts/test-*.ts
+**/scripts/migrate*.ts
+**/scripts/reset-*.ts
+**/scripts/verify-*.ts
+
+# supabase
+supabase/.temp/
+**/supabase/.temp/
+*baseline.sql.bak
+
+# misc
+migration.sql 

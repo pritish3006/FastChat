@@ -56,6 +56,30 @@ cd ../backend
 npm install
 ```
 
+### Database Setup
+
+1. **Install Supabase CLI**
+```bash
+npm install -g supabase
+```
+
+2. **Initialize Supabase**
+```bash
+supabase init
+```
+
+3. **Link to Your Supabase Project**
+```bash
+supabase link --project-ref your_project_ref
+```
+
+4. **Apply Database Migrations**
+```bash
+supabase db push
+```
+
+For detailed instructions on working with database migrations, see the [backend README](backend/README.md#database-migrations).
+
 ## Development
 
 ```bash
