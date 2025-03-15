@@ -11,6 +11,9 @@ import { ollamaService, StreamController } from './ollama';
 import logger from '../../utils/logger';
 import { config } from '../../config/index';
 import { ApiError } from '../../middleware/errorHandler';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { ModelProviderFactory } from './providers';
+import { ChatParams, ChatResponse, LLMServiceConfig } from './types';
 
 // generic model interface for any provider
 export interface Model {
@@ -174,4 +177,53 @@ export const llmService = {
       return '';
     }).join('') + 'Assistant: ';
   }
-}; 
+};
+
+export class LLMService {
+  private config: LLMServiceConfig;
+  private model: Awaited<ReturnType<typeof ModelProviderFactory.getProvider>>;
+
+  constructor(config: LLMServiceConfig) {
+    this.config = config;
+  }
+
+  async initialize(): Promise<void> {
+    const provider = ModelProviderFactory.getProvider(this.config.model);
+    this.model = await provider.initialize(this.config.model);
+  }
+
+  async chat({ message, systemPrompt, callbacks }: ChatParams): Promise<ChatResponse> {
+    if (!this.model) {
+      throw new Error('LLM Service not initialized');
+    }
+
+    const messages = [];
+    
+    if (systemPrompt) {
+      messages.push(new SystemMessage(systemPrompt));
+    }
+    
+    messages.push(new HumanMessage(message));
+
+    try {
+      const response = await this.model.invoke(messages, {
+        callbacks: callbacks ? {
+          handleLLMNewToken: callbacks.onToken,
+          handleLLMStart: callbacks.onStart,
+          handleLLMEnd: callbacks.onComplete,
+          handleLLMError: callbacks.onError,
+        } : undefined,
+      });
+
+      return {
+        text: response.content,
+        metadata: {
+          model: this.config.model.modelId,
+          provider: this.config.model.provider,
+        },
+      };
+    } catch (error) {
+      throw new Error(`Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+} 
