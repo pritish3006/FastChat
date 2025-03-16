@@ -1,13 +1,49 @@
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { WebSocket } from 'ws';
 
-export interface ModelConfig {
-  provider: 'ollama' | 'openai' | 'anthropic';  // extensible for future providers
+// Base model properties shared between config and runtime
+export interface BaseModelProperties {
+  provider: 'ollama' | 'openai' | 'anthropic';
   modelId: string;
   baseUrl?: string;
+}
+
+// Configuration interface - what users provide
+export interface ModelConfig extends BaseModelProperties {
   temperature?: number;
   topP?: number;
   apiKey?: string;
+}
+
+// Runtime model information
+export interface ModelInfo {
+  contextWindow: number;
+  parameters?: {
+    parameter_count?: number;
+    context_length?: number;
+    family?: string;
+    capabilities?: string[];
+  };
+  status?: {
+    isAvailable: boolean;
+    lastHealthCheck: number;
+    avgResponseTime?: number;
+    errorRate?: number;
+  };
+}
+
+// Full model representation for registry and fallback management
+export interface Model extends BaseModelProperties {
+  name: string;
+  description?: string;
+  config: Omit<ModelConfig, keyof BaseModelProperties>;  // Avoid duplication
+  info: ModelInfo;
+  metadata?: {
+    tags?: string[];
+    version?: string;
+    lastUpdated?: number;
+    usageCount?: number;
+  };
 }
 
 export interface StreamCallbacks {
@@ -115,5 +151,6 @@ export interface Message {
     model?: string;           // Model used to generate this message
     persistedAt?: number;     // Timestamp when message was persisted to DB
     similarity?: number;      // For vector search results
+    mergedFrom?: string;      // ID of the source branch when this message came from a merge
   };
 } 

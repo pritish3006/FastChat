@@ -25,6 +25,7 @@ export class RedisManager {
     lock: (key: string) => `${this.keyPrefix}lock:${key}`,
     processingQueue: (sessionId: string) => `${this.keyPrefix}queue:${sessionId}`,
     messageVersions: (messageId: string) => `${this.keyPrefix}messageVersions:${messageId}`,
+    branchHistory: (sessionId: string) => `${this.keyPrefix}branchHistory:${sessionId}`,
   };
 
   constructor(config: RedisConfig) {
@@ -32,7 +33,9 @@ export class RedisManager {
     this.keyPrefix = config.prefix || 'fast-chat:memory:';
   }
 
-  async initialize(): Promise<void> {
+  async connect(): Promise<void> {
+    if (this.client) return; // Already connected
+    
     if (!this.config.enabled) {
       return;
     }
@@ -42,14 +45,18 @@ export class RedisManager {
       
       // Set up error handling
       this.client.on('error', (error) => {
-        throw new RedisConnectionError('Redis client error', { error });
+        console.error('Redis client error:', error);
       });
 
       // Test connection
       await this.ping();
     } catch (error) {
-      throw new RedisConnectionError('Failed to initialize Redis', { error });
+      throw new RedisConnectionError('Failed to connect to Redis', { error });
     }
+  }
+
+  async initialize(): Promise<void> {
+    return this.connect();
   }
 
   private async createClient(): Promise<Redis> {
@@ -70,6 +77,17 @@ export class RedisManager {
     return url ? new Redis(url) : new Redis(options);
   }
 
+  // Generic Redis operations
+  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    if (!this.client) throw new RedisConnectionError('Redis client not initialized');
+    
+    if (ttlSeconds) {
+      await this.client.setex(key, ttlSeconds, value);
+    } else {
+      await this.client.set(key, value);
+    }
+  }
+
   // Session Management
   async setSession(session: Session): Promise<void> {
     if (!this.client) throw new RedisConnectionError('Redis client not initialized');
@@ -80,6 +98,10 @@ export class RedisManager {
       this.config.sessionTTL || 24 * 60 * 60, // Default 24 hours
       JSON.stringify(session)
     );
+  }
+
+  async updateSession(sessionId: string, session: Session): Promise<void> {
+    return this.setSession(session);
   }
 
   async getSession(sessionId: string): Promise<Session | null> {
@@ -130,6 +152,50 @@ export class RedisManager {
       // Release lock
       await this.releaseLock(message.sessionId);
     }
+  }
+
+  // Wrapper for addMessage to maintain API compatibility
+  async storeMessage(message: Message): Promise<void> {
+    return this.addMessage(message);
+  }
+
+  async getMessage(messageId: string): Promise<Message | null> {
+    if (!this.client) throw new RedisConnectionError('Redis client not initialized');
+    
+    const messageKey = this.keys.messageData(messageId);
+    const data = await this.client.get(messageKey);
+    return data ? JSON.parse(data) : null;
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    if (!this.client) throw new RedisConnectionError('Redis client not initialized');
+    
+    // Get the message to find out what session and branch it belongs to
+    const message = await this.getMessage(messageId);
+    if (!message) return; // Message doesn't exist, nothing to delete
+    
+    const messageKey = this.keys.messageData(messageId);
+    
+    // Start a transaction
+    const pipeline = this.client.pipeline();
+    
+    // Delete the message data
+    pipeline.del(messageKey);
+    
+    // Remove from session message list
+    if (message.sessionId) {
+      const messagesKey = this.keys.messages(message.sessionId);
+      pipeline.zrem(messagesKey, messageId);
+    }
+    
+    // Remove from branch message list if applicable
+    if (message.branchId) {
+      const branchMessagesKey = this.keys.branchMessages(message.branchId);
+      pipeline.zrem(branchMessagesKey, messageId);
+    }
+    
+    // Execute the transaction
+    await pipeline.exec();
   }
 
   async getMessages(
