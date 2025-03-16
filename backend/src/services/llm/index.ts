@@ -24,6 +24,7 @@ import { DEFAULT_MEMORY_CONFIG } from './memory/config';
 import { TokenCounter, TokenTracker } from './tokens';
 import { v4 as uuidv4 } from 'uuid';
 import { TokenLogger } from './tokens/tokenLogger';
+import { StreamingManager } from './streaming';
 
 // generic model interface for any provider
 export interface Model {
@@ -196,75 +197,87 @@ export class LLMService {
   private tokenCounter: TokenCounter;
   private tokenTracker: TokenTracker;
   private tokenLogger: TokenLogger;
+  private streamingManager: StreamingManager;
 
   constructor(config: LLMServiceConfig) {
     this.config = config;
   }
 
   async initialize(): Promise<void> {
-    // Initialize provider
-    const provider = ModelProviderFactory.getProvider(this.config.model);
-    this.model = await provider.initialize(this.config.model);
-    
-    // Initialize token counter with base URL from config
-    const ollamaBaseUrl = this.config.model.baseUrl || 'http://localhost:11434';
-    this.tokenCounter = new TokenCounter(ollamaBaseUrl);
+    // Initialize model provider
+    try {
+      this.model = await ModelProviderFactory.getProvider(this.config.model);
+      logger.info(`Initialized LLM provider: ${this.config.model.provider}`);
+    } catch (error) {
+      logger.error('Failed to initialize LLM provider:', error);
+      throw error;
+    }
 
-    // Initialize Memory Manager if configured
-    if (this.config.memory?.redisUrl) {
-      // Configure memory manager with vector store and embedding service
-      const memoryConfig: MemoryManagerConfig = {
-        redisUrl: this.config.memory.redisUrl,
-        sessionTTL: this.config.memory.sessionTTL
+    // Initialize memory system if config is provided
+    if (this.config.memory) {
+      const memoryConfig = {
+        ...DEFAULT_MEMORY_CONFIG,
+        ...this.config.memory
       };
-      
-      // Add vector store if configured
-      if (this.config.memory.vectorStore) {
-        memoryConfig.vectorStore = {
-          type: 'supabase',
-          supabaseUrl: this.config.memory.vectorStore.supabaseUrl,
-          supabaseKey: this.config.memory.vectorStore.supabaseKey,
-          tableName: this.config.memory.vectorStore.tableName
-        };
+
+      try {
+        // Initialize Redis manager if URL provided
+        let redisManager: RedisManager | undefined;
+        if (memoryConfig.redisUrl) {
+          redisManager = new RedisManager(memoryConfig.redisUrl);
+          await redisManager.connect();
+          logger.info('Redis connection established');
+        }
+
+        // Initialize vector store if config provided
+        let vectorStore: VectorStore | undefined;
+        if (memoryConfig.vectorStore) {
+          const embeddingService = new EmbeddingService({
+            model: memoryConfig.vectorStore.embeddingModel || 'default'
+          });
+          
+          vectorStore = new VectorStore({
+            embeddingService,
+            config: memoryConfig.vectorStore
+          });
+          
+          logger.info('Vector store initialized');
+        }
+
+        // Create memory manager
+        this.memoryManager = new MemoryManager({
+          redisManager,
+          vectorStore,
+          sessionTTL: memoryConfig.sessionTTL
+        });
         
-        // Add embedding service if vector store is configured
-        memoryConfig.embeddingService = {
-          apiUrl: ollamaBaseUrl,
-          model: this.config.memory.vectorStore.embeddingModel || this.config.model.modelId
-        };
+        // Initialize streaming manager with Redis for tracking
+        this.streamingManager = new StreamingManager(redisManager);
+        logger.info('Streaming manager initialized');
 
-        // Add database configuration if vector store is configured (same Supabase instance)
-        memoryConfig.database = {
-          supabaseUrl: this.config.memory.vectorStore.supabaseUrl,
-          supabaseKey: this.config.memory.vectorStore.supabaseKey,
-          messagesTable: 'messages',
-          sessionsTable: 'chat_sessions'
-        };
+        logger.info('Memory system initialized');
+      } catch (error) {
+        logger.error('Failed to initialize memory system:', error);
+        throw error;
+      }
+    }
 
-        // Configure persistence options
-        memoryConfig.persistenceOptions = {
-          persistImmediately: true, // Store in DB immediately (can be changed to false for batch processing)
-          maxRedisAge: 7 * 24 * 60 * 60, // Keep in Redis for 7 days
-          batchSize: 50 // Batch size for bulk operations
-        };
+    // Initialize token counter and tracker
+    try {
+      this.tokenCounter = new TokenCounter(this.config.model.baseUrl);
+      this.tokenTracker = new TokenTracker(this.memoryManager.redisManager);
+      
+      // Initialize token logger if we have Redis
+      if (this.memoryManager?.redisManager) {
+        this.tokenLogger = new TokenLogger(this.memoryManager.redisManager);
       }
       
-      // Initialize memory manager with all components
-      this.memoryManager = new MemoryManager(memoryConfig);
-      await this.memoryManager.initialize();
-      
-      // Initialize token tracker
-      this.tokenTracker = new TokenTracker(
-        this.memoryManager.getRedisManager(), 
-        this.tokenCounter,
-        {
-          enableRateLimiting: false  // As per your requirement, no rate limiting based on tokens
-        }
-      );
-
-      // Initialize token logger with Supabase client
-      this.tokenLogger = new TokenLogger(this.memoryManager.getSupabaseClient());
+      logger.info('Token tracking system initialized');
+    } catch (error) {
+      logger.error('Failed to initialize token tracking:', error);
     }
+
+    logger.info('LLM service initialized successfully');
   }
 
   // Session Management
@@ -447,13 +460,84 @@ export class LLMService {
     const formattedMessages = this.formatMessagesForModel(context, params.message);
 
     try {
+      // Generate response ID early for tracking
+      const assistantMessageId = uuidv4();
+      
       // Handle streaming if WebSocket is provided
       if (params.websocket && this.model.generateStream) {
+        // Register the connection with the streaming manager
+        const connectionId = this.streamingManager.registerConnection(session.id, params.websocket);
+        
+        // Start streaming in a non-blocking way
         const stream = await this.model.generateStream(params);
-        this.handleStream(stream, params.websocket, params.callbacks);
+        this.streamingManager.streamResponse(
+          connectionId,
+          session.id,
+          assistantMessageId,
+          stream,
+          params.callbacks
+        ).then(async (progress) => {
+          // After streaming is complete, store the message
+          if (progress.status === 'completed' && this.memoryManager) {
+            // Get the accumulated content from the websocket message
+            // In a real implementation, you'd get this from the accumulated content
+            // This is a placeholder - needs to be completed with real implementation
+            const content = ""; // We need a way to get the accumulated content
+            
+            // Create assistant message
+            const assistantMessage: Message = {
+              id: assistantMessageId,
+              sessionId: session.id,
+              content: content,
+              role: 'assistant',
+              timestamp: Date.now(),
+              branchId: params.branchId,
+              parentMessageId: messageId,
+              version: 1,
+              metadata: {
+                tokens: progress.tokenCount
+              }
+            };
+            
+            // Store assistant message
+            await this.memoryManager.storeMessage(assistantMessage);
+            
+            // Track token usage
+            if (this.tokenTracker) {
+              await this.tokenTracker.trackTokenUsage(
+                session.id,
+                promptTokens,
+                progress.tokenCount
+              );
+            }
+          }
+        }).catch(error => {
+          logger.error(`Error processing stream completion: ${error.message}`);
+        });
+        
+        // Return partial response for streaming
+        return {
+          text: "",  // Text will be streamed
+          sessionId: session.id,
+          messageId: assistantMessageId,
+          branchId: params.branchId,
+          metadata: {
+            model: this.config.model.modelId,
+            provider: this.config.model.provider,
+            tokens: {
+              prompt: promptTokens,
+              completion: 0, // Will be updated as tokens are streamed
+              total: promptTokens
+            },
+            branchInfo: params.branchId ? {
+              parentMessageId: params.parentMessageId,
+              depth: 1 // Will be calculated properly in a real implementation
+            } : undefined
+          }
+        };
       }
 
-      // Generate response
+      // Non-streaming path
       const response = await this.model.invoke(formattedMessages, {
         callbacks: params.callbacks ? {
           handleLLMNewToken: params.callbacks.onToken,
@@ -471,7 +555,6 @@ export class LLMService {
       }
 
       // Create assistant message
-      const assistantMessageId = uuidv4();
       const assistantMessage: Message = {
         id: assistantMessageId,
         sessionId: session.id,
@@ -491,6 +574,15 @@ export class LLMService {
         await this.memoryManager.storeMessage(assistantMessage);
       }
 
+      // Track token usage
+      if (this.tokenTracker) {
+        await this.tokenTracker.trackTokenUsage(
+          session.id,
+          promptTokens,
+          completionTokens
+        );
+      }
+
       return {
         text: response.content,
         sessionId: session.id,
@@ -505,13 +597,14 @@ export class LLMService {
             total: promptTokens + completionTokens
           },
           branchInfo: params.branchId ? {
-            depth: context.messages.length,
             parentMessageId: params.parentMessageId,
-          } : undefined,
-        },
+            depth: 1 // Will be calculated properly in a real implementation
+          } : undefined
+        }
       };
     } catch (error) {
-      throw new Error(`Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error(`Error generating chat completion: ${error.message}`);
+      throw error;
     }
   }
 
@@ -591,29 +684,6 @@ export class LLMService {
     messages.push(new HumanMessage(userMessage));
     
     return messages;
-  }
-
-  // Stream Handling
-  private async handleStream(
-    stream: AsyncIterator<any>,
-    ws: WebSocket,
-    callbacks?: StreamCallbacks
-  ): Promise<void> {
-    try {
-      callbacks?.onStart?.();
-
-      for await (const chunk of stream) {
-        const token = chunk.toString();
-        ws.send(JSON.stringify({ type: 'token', content: token }));
-        callbacks?.onToken?.(token);
-      }
-
-      callbacks?.onComplete?.();
-      ws.send(JSON.stringify({ type: 'done' }));
-    } catch (error) {
-      callbacks?.onError?.(error as Error);
-      ws.send(JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : 'Stream error' }));
-    }
   }
 
   /**

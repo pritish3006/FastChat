@@ -10,6 +10,12 @@ import { startServer } from './server/lifecycle';
 import { config } from './config/index';
 import logger from './utils/logger';
 
+// Import routers
+import chatsRouter from './routes/chats';
+import modelsRouter from './routes/models';
+import tokensRouter from './routes/tokens';
+import branchesRouter from './routes/branches';
+
 // Display startup validation warnings
 if (config.server.nodeEnv === 'development') {
   // Check if using fallback services
@@ -20,6 +26,12 @@ if (config.server.nodeEnv === 'development') {
 
 // Initialize the server
 const server = initializeServer();
+
+// Register routes
+server.use('/api/chats', chatsRouter);
+server.use('/api/models', modelsRouter);
+server.use('/api/tokens', tokensRouter);
+server.use('/api/branches', branchesRouter);
 
 // Start the server
 const port = config.server.port;

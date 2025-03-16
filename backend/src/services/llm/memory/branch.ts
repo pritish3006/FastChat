@@ -52,8 +52,8 @@ export class BranchManager {
    * Creates a new branch from an existing message
    */
   async createBranch(
-    sessionId: string, 
-    originMessageId: string, 
+    sessionId: string,
+    originMessageId: string,
     options: BranchOptions = {}
   ): Promise<Branch> {
     // Get the original message to branch from
@@ -61,7 +61,7 @@ export class BranchManager {
     if (!originMessage) {
       throw new BranchError('Origin message not found', { originMessageId });
     }
-    
+
     // Determine the parent branch ID (if this is already part of a branch)
     const parentBranchId = originMessage.branchId;
     
@@ -541,7 +541,7 @@ export class BranchManager {
     if (!session) {
       throw new BranchError('Session not found', { sessionId });
     }
-    
+
     // Add branch to session
     session.branches = [...(session.branches || []), branchId];
     
@@ -583,7 +583,7 @@ export class BranchManager {
         originalMessageId: originalMessage.id
       }
     };
-    
+
     return newVersion;
   }
 
