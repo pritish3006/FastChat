@@ -1,30 +1,761 @@
-// @ts-nocheck
 /**
- * llm service
+ * LLM Service
  * 
- * abstract provider interface for different llm backends.
- * handles model management, streaming, and provider selection.
+ * Core service that integrates model providers, memory management, and streaming
+ * for a comprehensive LLM interaction system.
  */
 
 import { EventEmitter } from 'events';
-import { ollamaService, StreamController } from './ollama';
-import logger from '../../utils/logger';
-import { config } from '../../config/index';
-import { ApiError } from '../../middleware/errorHandler';
-import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
-import { ModelProviderFactory } from './providers';
-import { ChatParams, ChatResponse, LLMServiceConfig, Session, Context, Message } from './types';
-import { MemoryManager } from './memory';
-import { RedisManager } from './memory/redis';
-import { ContextManager } from './memory/context';
-import { BranchManager, Branch } from './memory/branch';
-import { VectorStore } from './memory/vector';
-import { EmbeddingService } from './memory/embedding';
-import { DEFAULT_MEMORY_CONFIG } from './memory/config';
-import { TokenCounter, TokenTracker } from './tokens';
 import { v4 as uuidv4 } from 'uuid';
-import { TokenLogger } from './tokens/tokenLogger';
+import logger from '../../utils/logger';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
+import { ApiError } from '../../middleware/errorHandler';
+import { config } from '../../config/index';
+import { ollamaService, StreamController } from './ollama';
+import { eventEmitterToAsyncIterable } from './utils';
+
+// Import core components
+import { ModelProviderFactory } from './providers';
+import { MemoryManager } from './memory';
+import { BranchManager } from './memory/branch';
 import { StreamingManager } from './streaming';
+import type { Branch, BranchHistoryEntry } from './memory/branch';
+import { RedisManager } from './memory/redis';
+import { DEFAULT_MEMORY_CONFIG } from './memory/config';
+
+// Import types
+import {
+  ChatParams,
+  ChatResponse,
+  LLMServiceConfig,
+  ModelConfig,
+  Session,
+  Context,
+  Message,
+  StreamCallbacks
+} from './types';
+
+// Define ChatMessage interface locally to match what's used in the service
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+  name?: string;
+}
+
+/**
+ * Main LLM Service class that coordinates model providers, memory, and streaming
+ */
+export class LLMService {
+  private config: LLMServiceConfig;
+  private model: Awaited<ReturnType<typeof ModelProviderFactory.getProvider>> | null = null;
+  private memoryManager: MemoryManager;
+  private branchManager: BranchManager;
+  private streamingManager: StreamingManager;
+  private initialized: boolean = false;
+
+  /**
+   * Create a new LLM service
+   */
+  constructor(config: LLMServiceConfig) {
+    this.config = config;
+    
+    // Create memory manager with proper configuration
+    if (config.memory) {
+      const memoryConfig = config.memory;
+      
+      // Configure memory system with Redis connection
+      const redisConfig = {
+        enabled: true,
+        url: memoryConfig.redis?.url || 'redis://localhost:6379',
+        prefix: memoryConfig.redis?.prefix || 'fast-chat:memory:',
+        sessionTTL: memoryConfig.redis?.sessionTTL || 24 * 60 * 60
+      };
+      
+      // Use default config values with overrides
+      this.memoryManager = new MemoryManager({
+        redis: redisConfig,
+        defaults: DEFAULT_MEMORY_CONFIG.defaults,
+        database: memoryConfig.database || DEFAULT_MEMORY_CONFIG.database
+      });
+    } else {
+      // Default memory configuration if none provided
+      this.memoryManager = new MemoryManager(DEFAULT_MEMORY_CONFIG);
+    }
+    
+    // Get the RedisManager from the memoryManager
+    const redisManager = this.memoryManager.getRedisManager();
+    
+    // Initialize branch manager with the RedisManager
+    this.branchManager = new BranchManager(redisManager);
+
+    // Initialize streaming manager
+    this.streamingManager = new StreamingManager();
+    
+    logger.info('LLM service created with configuration', {
+      modelProvider: config.model.provider,
+      modelId: config.model.modelId,
+      hasMemoryConfig: !!config.memory
+    });
+  }
+
+  /**
+   * Initialize the service and all its components
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      // Initialize memory system first
+      await this.memoryManager.initialize();
+      logger.info('Memory system initialized');
+      
+      // Create model provider
+      this.model = ModelProviderFactory.getProvider(this.config.model);
+      
+      // Initialize model provider
+      await this.model.initialize(this.config.model);
+      logger.info(`Model provider ${this.config.model.provider} initialized`);
+      
+      this.initialized = true;
+      logger.info('LLM service fully initialized');
+    } catch (error) {
+      logger.error('Failed to initialize LLM service:', error);
+      throw new Error(`LLM service initialization failed: ${error}`);
+    }
+  }
+
+  /**
+   * List available models from the provider
+   */
+  async listModels() {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    if (!this.model) {
+      throw new Error('Model provider not initialized');
+    }
+    
+    // The official way to get models is to call the ollamaService directly
+    // since the provider might not have a listModels method
+    return ollamaService.listModels(this.config.model.baseUrl);
+  }
+
+  /**
+   * Start a new session for conversation
+   */
+  async startSession(): Promise<Session> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    const sessionId = uuidv4();
+    const session: Session = {
+      id: sessionId,
+      createdAt: Date.now(),
+      lastAccessedAt: Date.now(),
+      messageCount: 0,
+      branches: [],
+      modelId: this.config.model.modelId,
+      modelConfig: {
+        provider: this.config.model.provider,
+        modelId: this.config.model.modelId,
+        baseUrl: this.config.model.baseUrl
+      }
+    };
+    
+    // Create the session in redis
+    await this.memoryManager.getRedisManager().setSession(session);
+    
+    logger.info(`New session started: ${sessionId}`);
+    return session;
+  }
+
+  /**
+   * Get existing session or create a new one
+   */
+  async getOrCreateSession(sessionId?: string): Promise<Session> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    if (!sessionId) {
+      return this.startSession();
+    }
+    
+    try {
+      const session = await this.memoryManager.getRedisManager().getSession(sessionId);
+      if (session) {
+        // Update last accessed time
+        session.lastAccessedAt = Date.now();
+        await this.memoryManager.getRedisManager().updateSession(sessionId, session);
+        return session;
+      }
+    } catch (error) {
+      logger.error(`Error retrieving session ${sessionId}:`, error);
+    }
+    
+    // Session not found or error, create new
+    return this.startSession();
+  }
+
+  /**
+   * Create a new conversation branch
+   */
+  async createBranch(
+    sessionId: string, 
+    originMessageId: string, 
+    options: { name?: string; metadata?: Record<string, any> } = {}
+  ): Promise<Branch> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.createBranch(sessionId, originMessageId, options);
+  }
+
+  /**
+   * Get all branches for a session
+   */
+  async getBranches(sessionId: string, includeArchived: boolean = false): Promise<Branch[]> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.getBranches(sessionId, includeArchived);
+  }
+
+  /**
+   * Get a specific branch by ID
+   */
+  async getBranch(branchId: string): Promise<Branch | null> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.getBranch(branchId);
+  }
+
+  /**
+   * Switch to a different branch
+   */
+  async switchBranch(sessionId: string, branchId: string): Promise<Branch> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.switchBranch(sessionId, branchId);
+  }
+
+  /**
+   * Merge one branch into another
+   */
+  async mergeBranches(
+    sessionId: string, 
+    sourceBranchId: string, 
+    targetBranchId: string
+  ): Promise<Branch> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.mergeBranches(sessionId, sourceBranchId, targetBranchId);
+  }
+
+  /**
+   * Archive a branch
+   */
+  async archiveBranch(sessionId: string, branchId: string): Promise<Branch> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.archiveBranch(sessionId, branchId);
+  }
+
+  /**
+   * Delete a branch
+   */
+  async deleteBranch(
+    sessionId: string, 
+    branchId: string, 
+    options: { deleteMessages?: boolean } = {}
+  ): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.deleteBranch(sessionId, branchId, options);
+  }
+
+  /**
+   * Get branch history for a session
+   */
+  async getBranchHistory(sessionId: string): Promise<BranchHistoryEntry[]> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.getBranchHistory(sessionId);
+  }
+
+  /**
+   * Edit a message's content
+   */
+  async editMessage(messageId: string, newContent: string): Promise<Message> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    return this.branchManager.editMessage(messageId, newContent);
+  }
+
+  /**
+   * Main chat method for interacting with the LLM
+   */
+  async chat(params: ChatParams): Promise<ChatResponse> {
+    if (!this.initialized) {
+      logger.info('Initializing LLM service for chat request');
+      await this.initialize();
+    }
+    
+    if (!this.model) {
+      throw new Error('Model provider not initialized');
+    }
+    
+    const {
+      sessionId: providedSessionId,
+      message,
+      branchId = 'main',
+      parentMessageId,
+      systemPrompt,
+      callbacks,
+      websocket
+    } = params;
+    
+    const startTime = Date.now();
+    
+    logger.info('Starting chat request:', {
+      messageLength: message.length,
+      hasSystemPrompt: !!systemPrompt,
+      hasCallbacks: !!callbacks,
+      hasWebSocket: !!websocket,
+      branchId
+    });
+    
+    // Get or create session
+    const session = await this.getOrCreateSession(providedSessionId);
+    const sessionId = session.id;
+    
+    // Get model configuration
+    const modelId = this.config.model.modelId;
+    const modelProvider = this.config.model.provider;
+    
+    // Generate request and message IDs
+    const requestId = uuidv4();
+    const messageId = uuidv4();
+    
+    try {
+      const redisManager = this.memoryManager.getRedisManager();
+
+      // Create user message
+      const userMessage: Message = {
+        id: uuidv4(),
+        sessionId,
+        role: 'user',
+        content: message,
+        timestamp: Date.now(),
+        branchId,
+        version: 1,
+        metadata: {},
+        ...(parentMessageId && { parentId: parentMessageId })
+      };
+      
+      // Add message to Redis
+      await redisManager.storeMessage(userMessage);
+      logger.debug(`Added user message ${userMessage.id} to Redis`);
+      
+      // Create assistant message shell (will be filled in later)
+      const assistantMessage: Message = {
+        id: messageId,
+        sessionId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        branchId,
+        version: 1,
+        metadata: {
+          model: modelId,
+          provider: modelProvider
+        },
+        parentId: userMessage.id
+      };
+      
+      // Assemble context for the conversation
+      const context = await this.memoryManager.assembleContext(
+        sessionId,
+        message,
+        {
+          maxTokens: this.config.defaultParams?.maxTokens || 4000,
+          maxMessages: 10,
+          useSimilarity: false,
+          branchId
+        }
+      );
+
+      // If we have a systemPrompt from params, add it to context
+      if (systemPrompt && !context.systemPrompt) {
+        context.systemPrompt = systemPrompt;
+      }
+      
+      // Format messages for the model
+      const modelMessages = this.formatMessagesForModel(context, message);
+      
+      // Get streaming response from model
+      logger.info('Initiating chat completion with streaming');
+      const response = await this.model.generateChatCompletion({
+        messages: modelMessages.map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        systemPrompt: context.systemPrompt,
+        stream: true,
+        signal: params.signal
+      });
+
+      if (!('on' in response)) {
+        throw new Error('Expected streaming response from model');
+      }
+
+      const controller = response as EventEmitter;
+      let responseText = '';
+
+      // Convert EventEmitter to AsyncIterable
+      const streamIterator = eventEmitterToAsyncIterable(controller);
+
+      // Use StreamingManager to handle the stream
+      await this.streamingManager.streamResponse(
+        sessionId,
+        messageId,
+        userMessage.id,
+        streamIterator,
+        {
+          onToken: (token: string) => {
+            responseText += token;
+            if (callbacks?.onToken) {
+              callbacks.onToken(token);
+            }
+          },
+          onComplete: async () => {
+            // Update assistant message with final content
+            assistantMessage.content = responseText;
+            await redisManager.storeMessage(assistantMessage);
+            
+            if (callbacks?.onComplete) {
+              callbacks.onComplete();
+            }
+          },
+          onError: (error: Error) => {
+            logger.error('Stream error:', error);
+            if (callbacks?.onError) {
+              callbacks.onError(error);
+            }
+          },
+          websocket
+        }
+      );
+      
+      // Create response object
+      const chatResponse: ChatResponse = {
+        text: responseText,
+        sessionId,
+        messageId: assistantMessage.id,
+        branchId,
+        metadata: {
+          model: modelId,
+          provider: modelProvider,
+          branchInfo: {
+            depth: 0,
+            parentMessageId: userMessage.id
+          }
+        }
+      };
+      
+      const endTime = Date.now();
+      logger.info(`Chat request completed in ${endTime - startTime}ms`, {
+        requestId,
+        responseLength: responseText.length
+      });
+      
+      return chatResponse;
+      
+    } catch (err) {
+      const error = err as Error;
+      const errorMessage = `Error processing chat request: ${error.message || 'Unknown error'}`;
+      logger.error(errorMessage, { requestId, error });
+      
+      return {
+        text: `Sorry, there was an error processing your request: ${error.message || 'Unknown error'}`,
+        sessionId,
+        messageId: uuidv4(),
+        metadata: {
+          model: modelId,
+          provider: modelProvider,
+          tokens: {
+            prompt: 0,
+            completion: 0,
+            total: 0
+          }
+        }
+      };
+    }
+  }
+
+  /**
+   * Format messages for the model
+   */
+  private formatMessagesForModel(context: Context, userMessage: string): ChatMessage[] {
+    const messages: ChatMessage[] = [];
+    
+    // Add system message if provided
+    if (context.systemPrompt) {
+      messages.push({
+        role: 'system',
+        content: context.systemPrompt
+      });
+    }
+    
+    // Add context messages
+    for (const msg of context.messages) {
+      messages.push({
+        role: msg.role,
+        content: msg.content
+      });
+    }
+    
+    // Add the current user message if not already in context
+    const lastContextMessage = context.messages[context.messages.length - 1];
+    if (!lastContextMessage || lastContextMessage.role !== 'user' || lastContextMessage.content !== userMessage) {
+      messages.push({
+        role: 'user',
+        content: userMessage
+      });
+    }
+    
+    return messages;
+  }
+
+  /**
+   * Get token usage statistics for a session
+   */
+  async getSessionTokenUsage(sessionId: string): Promise<{ 
+    prompt: number; 
+    completion: number; 
+    total: number; 
+  }> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    // Simplified token usage stats based on character count
+    try {
+      const messages = await this.memoryManager.getRedisManager().getMessages(sessionId);
+      let promptTokens = 0;
+      let completionTokens = 0;
+      
+      for (const message of messages) {
+        const tokens = Math.ceil(message.content.length / 4); // Simple approximation
+        
+        if (message.role === 'user' || message.role === 'system') {
+          promptTokens += tokens;
+        } else if (message.role === 'assistant') {
+          completionTokens += tokens;
+        }
+      }
+      
+      return {
+        prompt: promptTokens,
+        completion: completionTokens,
+        total: promptTokens + completionTokens
+      };
+    } catch (error) {
+      logger.error(`Error getting token usage for session ${sessionId}:`, error);
+      return { prompt: 0, completion: 0, total: 0 };
+    }
+  }
+
+  /**
+   * Find messages similar to a query - currently not supported without vector store
+   */
+  async findSimilarMessages(
+    sessionId: string,
+    query: string,
+    options: {
+      limit?: number;
+      threshold?: number;
+    } = {}
+  ): Promise<Message[]> {
+    logger.warn('findSimilarMessages called but vector store is not configured');
+    return [];
+  }
+
+  /**
+   * Clean up resources
+   */
+  async shutdown(): Promise<void> {
+    if (this.initialized) {
+      logger.info('Shutting down LLM service');
+      await this.memoryManager.cleanup();
+      this.initialized = false;
+    }
+  }
+
+  /**
+   * Initialize or reinitialize the model provider
+   */
+  private async initializeProvider(modelId?: string, config?: Partial<ModelConfig>): Promise<void> {
+    const providerConfig: ModelConfig = {
+      provider: this.config.model.provider,
+      modelId: modelId || this.config.model.modelId,
+      baseUrl: this.config.model.baseUrl,
+      temperature: config?.temperature,
+      topP: config?.topP,
+      topK: config?.topK
+    };
+
+    this.model = await ModelProviderFactory.getProvider(providerConfig);
+    await this.model.initialize(providerConfig);
+    
+    logger.info('Model provider initialized', {
+      provider: providerConfig.provider,
+      modelId: providerConfig.modelId,
+      hasConfig: !!config
+    });
+  }
+
+  /**
+   * Set model for a session
+   */
+  async setModel(sessionId: string, modelId: string): Promise<Session> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const session = await this.getOrCreateSession(sessionId);
+    
+    // Validate model exists
+    const models = await this.listModels();
+    const modelExists = models.some(m => m.name === modelId);
+    if (!modelExists) {
+      throw new Error(`Model ${modelId} not found`);
+    }
+
+    // Update session
+    session.modelId = modelId;
+    session.lastAccessedAt = Date.now();
+    
+    // Store in Redis
+    await this.memoryManager.getRedisManager().updateSession(sessionId, session);
+    
+    logger.info('Session model updated', {
+      sessionId,
+      modelId
+    });
+
+    return session;
+  }
+
+  /**
+   * Update model configuration for a session
+   */
+  async updateModelConfig(
+    sessionId: string,
+    config: Partial<Omit<ModelConfig, 'provider' | 'modelId' | 'baseUrl'>>
+  ): Promise<Session> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const session = await this.getOrCreateSession(sessionId);
+    
+    // Validate config
+    if (config.temperature !== undefined && (config.temperature < 0 || config.temperature > 1)) {
+      throw new Error('Temperature must be between 0 and 1');
+    }
+    if (config.topP !== undefined && (config.topP < 0 || config.topP > 1)) {
+      throw new Error('Top P must be between 0 and 1');
+    }
+
+    // Update session
+    if (!session.modelConfig) {
+      session.modelConfig = {
+        provider: this.config.model.provider,
+        modelId: session.modelId,
+        baseUrl: this.config.model.baseUrl,
+        temperature: config.temperature,
+        topP: config.topP,
+        topK: config.topK
+      };
+    } else {
+      session.modelConfig = {
+        ...session.modelConfig,
+        temperature: config.temperature ?? session.modelConfig.temperature,
+        topP: config.topP ?? session.modelConfig.topP,
+        topK: config.topK ?? session.modelConfig.topK
+      };
+    }
+    session.lastAccessedAt = Date.now();
+    
+    // Store in Redis
+    await this.memoryManager.getRedisManager().updateSession(sessionId, session);
+    
+    logger.info('Session model config updated', {
+      sessionId,
+      config: session.modelConfig
+    });
+
+    return session;
+  }
+
+  /**
+   * converts an array of messages to a prompt string for non-chat models
+   */
+  messagesToPrompt(messages: ChatMessage[]): string {
+    return messages.map(msg => {
+      if (msg.role === 'system') {
+        return `System: ${msg.content}\n\n`;
+      } else if (msg.role === 'user') {
+        return `User: ${msg.content}\n\n`;
+      } else if (msg.role === 'assistant') {
+        return `Assistant: ${msg.content}\n\n`;
+      }
+      return '';
+    }).join('') + 'Assistant: ';
+  }
+}
+
+// Export a factory function for simpler instantiation
+export function createLLMService(config: LLMServiceConfig): LLMService {
+  return new LLMService(config);
+}
+
+// Re-export types for ease of use
+export type {
+  ChatParams,
+  ChatResponse,
+  LLMServiceConfig,
+  ModelConfig,
+  Session,
+  Message,
+  Context,
+  Branch
+} from './types';
+
+// Re-export component factories for direct access
+export { ModelProviderFactory } from './providers';
+export { createMemoryManager } from './memory';
 
 // generic model interface for any provider
 export interface Model {
@@ -142,633 +873,13 @@ export const llmService = {
         return emitter;
       }
       
-      // route to appropriate provider
-      if (model.provider === 'ollama') {
-        return ollamaService.generateCompletion({
-          model: model.id,
-          prompt: request.prompt,
-          stream: true,
-          options: {
-            temperature: request.temperature,
-            top_p: request.topP,
-            stop: request.stop,
-          },
-          system: request.systemPrompt,
-          context: request.context,
-        });
-      }
-      
-      // provider not implemented
-      const emitter = new EventEmitter() as StreamController;
-      emitter.abort = () => {}; // dummy abort function
-      emitter.emit('error', new ApiError(501, `provider ${model.provider} not implemented`));
-      return emitter;
-      
+      // Add remaining implementation here
+      throw new Error('Not implemented');
     } catch (error) {
-      logger.error('error generating completion', { error, model: request.model });
       const emitter = new EventEmitter() as StreamController;
-      emitter.abort = () => {}; // dummy abort function
+      emitter.abort = () => {};
       emitter.emit('error', error instanceof ApiError ? error : new ApiError(500, 'error generating completion'));
       return emitter;
     }
   },
-  
-  /**
-   * converts an array of messages to a prompt string for non-chat models
-   */
-  messagesToPrompt(messages: ChatMessage[]): string {
-    return messages.map(msg => {
-      if (msg.role === 'system') {
-        return `System: ${msg.content}\n\n`;
-      } else if (msg.role === 'user') {
-        return `User: ${msg.content}\n\n`;
-      } else if (msg.role === 'assistant') {
-        return `Assistant: ${msg.content}\n\n`;
-      }
-      return '';
-    }).join('') + 'Assistant: ';
-  }
-};
-
-export class LLMService {
-  private config: LLMServiceConfig;
-  private model: Awaited<ReturnType<typeof ModelProviderFactory.getProvider>>;
-  private memoryManager: MemoryManager;
-  private tokenCounter: TokenCounter;
-  private tokenTracker: TokenTracker;
-  private tokenLogger: TokenLogger;
-  private streamingManager: StreamingManager;
-
-  constructor(config: LLMServiceConfig) {
-    this.config = config;
-  }
-
-  async initialize(): Promise<void> {
-    // Initialize model provider
-    try {
-      this.model = await ModelProviderFactory.getProvider(this.config.model);
-      logger.info(`Initialized LLM provider: ${this.config.model.provider}`);
-    } catch (error) {
-      logger.error('Failed to initialize LLM provider:', error);
-      throw error;
-    }
-
-    // Initialize memory system if config is provided
-    if (this.config.memory) {
-      const memoryConfig = {
-        ...DEFAULT_MEMORY_CONFIG,
-        ...this.config.memory
-      };
-
-      try {
-        // Initialize Redis manager if URL provided
-        let redisManager: RedisManager | undefined;
-        if (memoryConfig.redisUrl) {
-          redisManager = new RedisManager(memoryConfig.redisUrl);
-          await redisManager.connect();
-          logger.info('Redis connection established');
-        }
-
-        // Initialize vector store if config provided
-        let vectorStore: VectorStore | undefined;
-        if (memoryConfig.vectorStore) {
-          const embeddingService = new EmbeddingService({
-            model: memoryConfig.vectorStore.embeddingModel || 'default'
-          });
-          
-          vectorStore = new VectorStore({
-            embeddingService,
-            config: memoryConfig.vectorStore
-          });
-          
-          logger.info('Vector store initialized');
-        }
-
-        // Create memory manager
-        this.memoryManager = new MemoryManager({
-          redisManager,
-          vectorStore,
-          sessionTTL: memoryConfig.sessionTTL
-        });
-        
-        // Initialize streaming manager with Redis for tracking
-        this.streamingManager = new StreamingManager(redisManager);
-        logger.info('Streaming manager initialized');
-
-        logger.info('Memory system initialized');
-      } catch (error) {
-        logger.error('Failed to initialize memory system:', error);
-        throw error;
-      }
-    }
-
-    // Initialize token counter and tracker
-    try {
-      this.tokenCounter = new TokenCounter(this.config.model.baseUrl);
-      this.tokenTracker = new TokenTracker(this.memoryManager.redisManager);
-      
-      // Initialize token logger if we have Redis
-      if (this.memoryManager?.redisManager) {
-        this.tokenLogger = new TokenLogger(this.memoryManager.redisManager);
-      }
-      
-      logger.info('Token tracking system initialized');
-    } catch (error) {
-      logger.error('Failed to initialize token tracking:', error);
-    }
-
-    logger.info('LLM service initialized successfully');
-  }
-
-  // Session Management
-  async startSession(): Promise<Session> {
-    const session: Session = {
-      id: uuidv4(),
-      createdAt: Date.now(),
-      lastAccessedAt: Date.now(),
-      messageCount: 0,
-      branches: [],
-    };
-
-    if (this.memoryManager) {
-      await this.memoryManager.getRedisManager().setSession(session);
-    }
-
-    return session;
-  }
-
-  async getOrCreateSession(sessionId?: string): Promise<Session> {
-    if (!sessionId) {
-      return this.startSession();
-    }
-
-    if (this.memoryManager) {
-      const session = await this.memoryManager.getRedisManager().getSession(sessionId);
-      if (session) {
-        return session;
-      }
-    }
-
-    return this.startSession();
-  }
-
-  // Branch Management
-  async createBranch(
-    sessionId: string, 
-    originMessageId: string, 
-    name?: string
-  ): Promise<Branch> {
-    if (!this.memoryManager) {
-      throw new Error('Memory management not available');
-    }
-    
-    return this.memoryManager.getBranchManager().createBranch(sessionId, originMessageId, { name });
-  }
-
-  async getBranches(sessionId: string): Promise<Branch[]> {
-    if (!this.memoryManager) {
-      return [];
-    }
-    
-    return this.memoryManager.getBranchManager().getBranches(sessionId);
-  }
-
-  async editMessage(messageId: string, newContent: string): Promise<Message> {
-    if (!this.memoryManager) {
-      throw new Error('Message editing not available');
-    }
-    
-    const message = await this.memoryManager.getBranchManager().editMessage(messageId, newContent);
-    
-    // If vector store is enabled, update the embedding
-    if (this.memoryManager.getVectorStore() && this.memoryManager.getEmbeddingService()) {
-      try {
-        // Generate new embedding for edited content
-        const embedding = await this.memoryManager.getEmbeddingService()!.embedText(newContent);
-        
-        // Update embedding in vector store
-        await this.memoryManager.getVectorStore()!.updateEmbedding(
-          messageId,
-          newContent,
-          embedding,
-          {
-            sessionId: message.sessionId,
-            role: message.role,
-            branchId: message.branchId,
-            timestamp: message.timestamp,
-            version: message.version
-          }
-        );
-      } catch (error) {
-        logger.warn('Failed to update message embedding:', error);
-        // Continue even if embedding update fails
-      }
-    }
-    
-    return message;
-  }
-
-  // Context Management
-  private async assembleContext(params: ChatParams): Promise<Context> {
-    // Basic context assembly with recency
-    const context = await this.memoryManager.getContextManager().assembleContext(
-      params.sessionId!,
-      {
-        branchId: params.branchId
-      }
-    );
-    
-    // If RAG is requested, enhance with semantic search
-    if (params.chainType === 'rag' && params.message) {
-      const vectorStore = this.memoryManager.getVectorStore();
-      const embeddingService = this.memoryManager.getEmbeddingService();
-      
-      if (vectorStore && embeddingService) {
-        return this.memoryManager.assembleContext(
-          params.sessionId!,
-          params.message,
-          {
-            branchId: params.branchId,
-            useSimilarity: true,
-            includeBranches: true
-          }
-        );
-      }
-    }
-    
-    return context;
-  }
-
-  // Main Chat Method
-  async chat(params: ChatParams): Promise<ChatResponse> {
-    // Get or create session
-    const session = await this.getOrCreateSession(params.sessionId);
-    params.sessionId = session.id;
-
-    // Assemble context using ContextManager
-    const context = await this.memoryManager.assembleContext(params);
-
-    // Create user message ID
-    const messageId = uuidv4();
-    
-    // Estimate prompt token count for user message
-    let promptTokens = 0;
-    let completionTokens = 0;
-    
-    if (this.tokenCounter) {
-      // Count user message tokens
-      promptTokens = await this.tokenCounter.countTokens(params.message, {
-        model: this.config.model.modelId
-      });
-      
-      // Add tokens for context messages
-      if (context.systemPrompt) {
-        promptTokens += await this.tokenCounter.countTokens(context.systemPrompt, {
-          model: this.config.model.modelId
-        });
-      }
-      
-      for (const msg of context.messages) {
-        promptTokens += msg.metadata?.tokens || 
-          await this.tokenCounter.countTokens(msg.content, {
-            model: this.config.model.modelId
-          });
-      }
-    }
-
-    // Create user message
-    const userMessage: Message = {
-      id: messageId,
-      sessionId: session.id,
-      content: params.message,
-      role: 'user',
-      timestamp: Date.now(),
-      branchId: params.branchId,
-      parentMessageId: params.parentMessageId,
-      version: 1,
-      metadata: {
-        tokens: promptTokens
-      }
-    };
-
-    // Store user message using MemoryManager
-    if (this.memoryManager) {
-      await this.memoryManager.storeMessage(userMessage);
-    }
-
-    // Prepare messages for the model
-    const formattedMessages = this.formatMessagesForModel(context, params.message);
-
-    try {
-      // Generate response ID early for tracking
-      const assistantMessageId = uuidv4();
-      
-      // Handle streaming if WebSocket is provided
-      if (params.websocket && this.model.generateStream) {
-        // Register the connection with the streaming manager
-        const connectionId = this.streamingManager.registerConnection(session.id, params.websocket);
-        
-        // Start streaming in a non-blocking way
-        const stream = await this.model.generateStream(params);
-        this.streamingManager.streamResponse(
-          connectionId,
-          session.id,
-          assistantMessageId,
-          stream,
-          params.callbacks
-        ).then(async (progress) => {
-          // After streaming is complete, store the message
-          if (progress.status === 'completed' && this.memoryManager) {
-            // Get the accumulated content from the websocket message
-            // In a real implementation, you'd get this from the accumulated content
-            // This is a placeholder - needs to be completed with real implementation
-            const content = ""; // We need a way to get the accumulated content
-            
-            // Create assistant message
-            const assistantMessage: Message = {
-              id: assistantMessageId,
-              sessionId: session.id,
-              content: content,
-              role: 'assistant',
-              timestamp: Date.now(),
-              branchId: params.branchId,
-              parentMessageId: messageId,
-              version: 1,
-              metadata: {
-                tokens: progress.tokenCount
-              }
-            };
-            
-            // Store assistant message
-            await this.memoryManager.storeMessage(assistantMessage);
-            
-            // Track token usage
-            if (this.tokenTracker) {
-              await this.tokenTracker.trackTokenUsage(
-                session.id,
-                promptTokens,
-                progress.tokenCount
-              );
-            }
-          }
-        }).catch(error => {
-          logger.error(`Error processing stream completion: ${error.message}`);
-        });
-        
-        // Return partial response for streaming
-        return {
-          text: "",  // Text will be streamed
-          sessionId: session.id,
-          messageId: assistantMessageId,
-          branchId: params.branchId,
-          metadata: {
-            model: this.config.model.modelId,
-            provider: this.config.model.provider,
-            tokens: {
-              prompt: promptTokens,
-              completion: 0, // Will be updated as tokens are streamed
-              total: promptTokens
-            },
-            branchInfo: params.branchId ? {
-              parentMessageId: params.parentMessageId,
-              depth: 1 // Will be calculated properly in a real implementation
-            } : undefined
-          }
-        };
-      }
-
-      // Non-streaming path
-      const response = await this.model.invoke(formattedMessages, {
-        callbacks: params.callbacks ? {
-          handleLLMNewToken: params.callbacks.onToken,
-          handleLLMStart: params.callbacks.onStart,
-          handleLLMEnd: params.callbacks.onComplete,
-          handleLLMError: params.callbacks.onError,
-        } : undefined,
-      });
-      
-      // Count completion tokens
-      if (this.tokenCounter) {
-        completionTokens = await this.tokenCounter.countTokens(response.content, {
-          model: this.config.model.modelId
-        });
-      }
-
-      // Create assistant message
-      const assistantMessage: Message = {
-        id: assistantMessageId,
-        sessionId: session.id,
-        content: response.content,
-        role: 'assistant',
-        timestamp: Date.now(),
-        branchId: params.branchId,
-        parentMessageId: messageId,
-        version: 1,
-        metadata: {
-          tokens: completionTokens
-        }
-      };
-      
-      // Store assistant message using MemoryManager
-      if (this.memoryManager) {
-        await this.memoryManager.storeMessage(assistantMessage);
-      }
-
-      // Track token usage
-      if (this.tokenTracker) {
-        await this.tokenTracker.trackTokenUsage(
-          session.id,
-          promptTokens,
-          completionTokens
-        );
-      }
-
-      return {
-        text: response.content,
-        sessionId: session.id,
-        messageId: assistantMessageId,
-        branchId: params.branchId,
-        metadata: {
-          model: this.config.model.modelId,
-          provider: this.config.model.provider,
-          tokens: {
-            prompt: promptTokens,
-            completion: completionTokens,
-            total: promptTokens + completionTokens
-          },
-          branchInfo: params.branchId ? {
-            parentMessageId: params.parentMessageId,
-            depth: 1 // Will be calculated properly in a real implementation
-          } : undefined
-        }
-      };
-    } catch (error) {
-      logger.error(`Error generating chat completion: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // Message Processing
-  private async processMessage(message: Message): Promise<void> {
-    try {
-      if (!this.memoryManager) {
-        return;
-      }
-      
-      // Count tokens in the message and update metadata
-      const tokens = await this.tokenCounter.countTokens(
-        message.content, 
-        { model: this.config.model.modelId }
-      );
-      
-      message.metadata = {
-        ...message.metadata,
-        tokens
-      };
-      
-      // Store message and generate embedding if vector store is available
-      const hasVectorStore = !!this.memoryManager.getVectorStore();
-      const hasEmbeddingService = !!this.memoryManager.getEmbeddingService();
-      
-      await this.memoryManager.storeMessage(
-        message,
-        hasVectorStore && hasEmbeddingService // Only generate embedding if both components are available
-      );
-      
-      // Track token usage if tokenTracker is available
-      if (this.tokenTracker) {
-        await this.tokenTracker.trackMessageTokens(message, this.config.model.modelId);
-      }
-
-      // Log token count to Supabase if tokenLogger is available
-      if (this.tokenLogger) {
-        await this.tokenLogger.logTokenCount({
-          session_id: message.sessionId,
-          user_id: message.metadata?.userId || 'anonymous',
-          message_id: message.id,
-          role: message.role,
-          text_length: message.content.length,
-          token_count: tokens,
-          model: this.config.model.modelId,
-          metadata: {
-            ...message.metadata,
-            persistedAt: Date.now()
-          }
-        });
-      }
-    } catch (error) {
-      logger.error(`Error processing message: ${error}`, { messageId: message.id });
-    }
-  }
-
-  // Helper Methods
-  private formatMessagesForModel(context: Context, userMessage: string) {
-    const messages = [];
-    
-    // Add system prompt if available
-    if (context.systemPrompt) {
-      messages.push(new SystemMessage(context.systemPrompt));
-    }
-    
-    // Add context messages
-    for (const msg of context.messages) {
-      if (msg.role === 'user') {
-        messages.push(new HumanMessage(msg.content));
-      } else if (msg.role === 'assistant') {
-        messages.push(new AIMessage(msg.content));
-      }
-      // Skip system messages as they're handled separately
-    }
-    
-    // Add current user message
-    messages.push(new HumanMessage(userMessage));
-    
-    return messages;
-  }
-
-  /**
-   * Get token usage for a session with Supabase integration
-   */
-  async getSessionTokenUsage(sessionId: string): Promise<{ 
-    prompt: number; 
-    completion: number; 
-    total: number; 
-  }> {
-    if (this.tokenLogger) {
-      try {
-        const usage = await this.tokenLogger.getSessionTokenUsage(sessionId);
-        return {
-          prompt: usage.prompt_tokens,
-          completion: usage.completion_tokens,
-          total: usage.total_tokens
-        };
-      } catch (error) {
-        logger.error(`Error getting session token usage from Supabase: ${error}`);
-      }
-    }
-    
-    // Fallback to Redis-based token tracking
-    if (this.tokenTracker) {
-      return this.tokenTracker.getSessionTokenUsage(sessionId);
-    }
-    
-    return { prompt: 0, completion: 0, total: 0 };
-  }
-  
-  /**
-   * Find semantically similar messages
-   */
-  async findSimilarMessages(
-    sessionId: string,
-    query: string,
-    options: {
-      limit?: number;
-      threshold?: number;
-    } = {}
-  ): Promise<Message[]> {
-    if (!this.memoryManager) {
-      logger.warn('Memory manager not initialized, cannot find similar messages');
-      return [];
-    }
-    
-    try {
-      return await this.memoryManager.findSimilarMessages(
-        sessionId,
-        query,
-        {
-          limit: options.limit || 5,
-          threshold: options.threshold || 0.7,
-          includeBranches: true
-        }
-      );
-    } catch (error) {
-      logger.error(`Error finding similar messages: ${error}`, { sessionId });
-      // Fallback to recent messages
-      const context = await this.memoryManager.getContextManager().assembleContext(sessionId, {});
-      return context.messages;
-    }
-  }
-  
-  /**
-   * Clean up resources
-   */
-  async shutdown(): Promise<void> {
-    if (this.memoryManager) {
-      await this.memoryManager.cleanup();
-    }
-  }
-
-  /**
-   * Get token usage analytics
-   */
-  async getTokenUsageAnalytics(
-    interval: 'hour' | 'day' | 'week' | 'month' = 'day',
-    startDate?: Date,
-    endDate?: Date
-  ) {
-    if (this.tokenLogger) {
-      return this.tokenLogger.getTokenUsageAnalytics(interval, startDate, endDate);
-    }
-    return [];
-  }
-} 
+}

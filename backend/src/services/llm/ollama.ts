@@ -69,18 +69,35 @@ export const ollamaService = {
   /**
    * fetches a list of available models from ollama
    */
-  async listModels(): Promise<OllamaModel[]> {
+  async listModels(baseUrl?: string): Promise<OllamaModel[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/tags`);
+      const url = baseUrl || this.baseUrl;
+      logger.info('Fetching models from Ollama', { url });
+      
+      const response = await fetch(`${url}/api/tags`);
       
       if (!response.ok) {
+        logger.error('Ollama API error', { 
+          status: response.status, 
+          statusText: response.statusText,
+          url 
+        });
         throw new Error(`ollama returned ${response.status}: ${response.statusText}`);
       }
       
       const data = await response.json();
+      logger.info('Successfully fetched models from Ollama', { 
+        modelCount: data.models?.length || 0,
+        url
+      });
       return data.models || [];
     } catch (error) {
-      logger.error('failed to fetch models from ollama', { error });
+      logger.error('Failed to fetch models from Ollama', { 
+        error, 
+        url: baseUrl || this.baseUrl,
+        errorMessage: error.message,
+        errorStack: error.stack
+      });
       throw new ApiError(502, 'failed to connect to ollama service');
     }
   },
@@ -90,7 +107,8 @@ export const ollamaService = {
    * returns an event emitter that emits 'data', 'end', and 'error' events
    */
   async generateCompletion(
-    params: OllamaCompletionRequest
+    params: OllamaCompletionRequest,
+    baseUrl?: string
   ): Promise<StreamController> {
     // create a new event emitter for the stream
     const streamController = new EventEmitter() as StreamController;
@@ -103,7 +121,8 @@ export const ollamaService = {
     params.stream = true;
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const url = baseUrl || this.baseUrl;
+      const response = await fetch(`${url}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

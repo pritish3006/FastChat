@@ -7,26 +7,40 @@
 
 import express, { Application } from 'express';
 import http from 'http';
-import { Server as SocketIOServer } from 'socket.io';
+import { WebSocketServer } from 'ws';
 import { applyAllMiddleware } from './middleware';
 import { registerAllRoutes } from './routes';
-import { createWebSocketServer, initializeWebSocketService } from './websocket';
-import { startServer, setupGracefulShutdown } from './lifecycle';
+import { createWSServer } from './trpc';
 import { errorHandler } from '../middleware/errorHandler';
 import { config } from '../config/index';
+import { createContext } from './trpc';
+import { appRouter } from './routers';
+import { createHTTPHandler } from '@trpc/server/adapters/standalone';
+import { applyWSSHandler } from '@trpc/server/adapters/ws';
+import { LLMWebSocketManager } from '../services/llm/websocket';
+import logger from '../utils/logger';
 
-// Socket.io server instance
-export let io: SocketIOServer;
+// WebSocket server instance
+export let wss: WebSocketServer;
+export let llmWSManager: LLMWebSocketManager;
 
 /**
  * creates the express application with all middleware and routes
  */
 export function createApp(): Application {
-  // Create express application
   const app = express();
   
   // Apply middleware
   applyAllMiddleware(app);
+  
+  // Create tRPC HTTP handler
+  const trpcHandler = createHTTPHandler({
+    router: appRouter,
+    createContext
+  });
+  
+  // Mount tRPC handler
+  app.use('/trpc', trpcHandler);
   
   // Register routes
   registerAllRoutes(app);
@@ -45,10 +59,36 @@ export function createServer(app: Application): http.Server {
   const server = http.createServer(app);
   
   // Initialize WebSocket server
-  io = createWebSocketServer(server);
+  wss = new WebSocketServer({ server });
   
-  // Initialize websocket service
-  initializeWebSocketService(io);
+  // Create LLM WebSocket manager
+  llmWSManager = new LLMWebSocketManager(
+    global.llmService,
+    global.redisManager
+  );
+  
+  // Apply tRPC WebSocket handler
+  const wssHandler = applyWSSHandler({
+    wss,
+    router: appRouter,
+    createContext
+  });
+  
+  // Handle WebSocket connection
+  wss.on('connection', (ws) => {
+    logger.info('Client connected to WebSocket');
+    
+    ws.on('close', () => {
+      logger.info('Client disconnected from WebSocket');
+    });
+  });
+  
+  // Cleanup handler
+  process.on('SIGTERM', () => {
+    logger.info('SIGTERM received');
+    wssHandler.broadcastReconnectNotification();
+    wss.close();
+  });
   
   return server;
 }
@@ -63,9 +103,6 @@ export function initializeServer(): http.Server {
   // Create the server
   const server = createServer(app);
   
-  // Set up graceful shutdown
-  setupGracefulShutdown(server);
-  
   return server;
 }
 
@@ -73,9 +110,9 @@ export function initializeServer(): http.Server {
 if (require.main === module) {
   const server = initializeServer();
   const port = config.server.port;
-  
-  // Start the server
-  startServer(server, port);
+  server.listen(port, () => {
+    logger.info(`Server listening on port ${port}`);
+  });
 }
 
 // Export the app for testing

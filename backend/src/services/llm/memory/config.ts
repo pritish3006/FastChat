@@ -1,4 +1,5 @@
 import { RedisOptions } from 'ioredis';
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 
 export interface MemoryConfig {
   redis: RedisConfig;
@@ -9,6 +10,16 @@ export interface MemoryConfig {
     sessionTTL: number;      // Time-to-live for session data in seconds
     maxContextSize: number;  // Maximum number of messages to keep in context
     maxMessageSize: number;  // Maximum size of a single message in bytes
+    contextWindowPercentage: number; // Percentage of model's context length to use for memory
+  };
+  langchain?: {
+    enabled: boolean;
+    model?: BaseChatModel;
+    memory?: {
+      useLangChainMemory: boolean;
+      maxMessages?: number;
+      summarizeAfter?: number;
+    };
   };
 }
 
@@ -40,10 +51,19 @@ export interface VectorStoreConfig {
 }
 
 export interface PersistenceConfig {
+  enabled: boolean;
   persistImmediately: boolean; // Store in DB immediately or in batches
   maxRedisAge: number;         // Max age of messages in Redis in seconds
   batchSize: number;           // Size of batches for bulk persistence
   cleanupInterval: number;     // Interval for Redis cleanup job in seconds
+}
+
+export interface EmbeddingServiceConfig {
+  model: BaseChatModel;
+  config?: {
+    dimensions?: number;
+    modelConfig?: Record<string, any>;
+  };
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -78,14 +98,16 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     dimensions: 1536
   },
   persistence: {
+    enabled: true,
     persistImmediately: true,
-    maxRedisAge: 7 * 24 * 60 * 60, // 7 days
-    batchSize: 50,
-    cleanupInterval: 12 * 60 * 60  // 12 hours
+    maxRedisAge: 24 * 60 * 60, // 24 hours
+    batchSize: 100,
+    cleanupInterval: 60 * 60 // 1 hour
   },
   defaults: {
     sessionTTL: 24 * 60 * 60,     // 24 hours
     maxContextSize: 50,           // 50 messages
     maxMessageSize: 32 * 1024,    // 32KB
+    contextWindowPercentage: 80,  // Use 80% of model's context length for memory
   },
 }; 

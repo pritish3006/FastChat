@@ -5,13 +5,14 @@
  * initializes the server using the modular server architecture.
  */
 
-import { initializeServer } from './server/index';
+import { createApp, createServer } from './server/index';
 import { startServer } from './server/lifecycle';
 import { config } from './config/index';
 import logger from './utils/logger';
+import { setupGracefulShutdown } from './server/lifecycle';
 
 // Import routers
-import chatsRouter from './routes/chats';
+import chatsRouter from './routes/chat';
 import modelsRouter from './routes/models';
 import tokensRouter from './routes/tokens';
 import branchesRouter from './routes/branches';
@@ -24,14 +25,18 @@ if (config.server.nodeEnv === 'development') {
   }
 }
 
-// Initialize the server
-const server = initializeServer();
+// Create Express app
+const app = createApp();
 
-// Register routes
-server.use('/api/chats', chatsRouter);
-server.use('/api/models', modelsRouter);
-server.use('/api/tokens', tokensRouter);
-server.use('/api/branches', branchesRouter);
+// Register additional routes
+app.use('/api/chats', chatsRouter);
+app.use('/api/models', modelsRouter);
+app.use('/api/tokens', tokensRouter);
+app.use('/api/branches', branchesRouter);
+
+// Create and initialize the HTTP server
+const server = createServer(app);
+setupGracefulShutdown(server);
 
 // Start the server
 const port = config.server.port;

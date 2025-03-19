@@ -1,35 +1,54 @@
-FROM node:18-alpine AS builder
+# Build stage
+FROM node:18-slim AS builder
 
 WORKDIR /app
 
-# Copy package files and install dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm ci
 
-# Copy the rest of the source code
+# Install all dependencies (including dev)
+RUN npm install && npm install @xenova/transformers
+
+# Copy source
 COPY . .
 
 # Build the application
 RUN npm run build
 
-# Production stage
-FROM node:18-alpine AS production
+# Development stage
+FROM node:18-slim AS development
 
 WORKDIR /app
 
-# Copy package files and install production dependencies only
+# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
 
-# Copy the built application from the builder stage
+# Install all dependencies for development
+RUN npm install && npm install @xenova/transformers @anush008/tokenizers
+
+# Copy source
+COPY . .
+
+# Set development environment
+ENV NODE_ENV=development
+
+# Start development server
+CMD ["npm", "run", "dev"]
+
+# Production stage
+FROM node:18-slim AS production
+
+WORKDIR /app
+
+# Install production dependencies only
+COPY package*.json ./
+RUN npm install --only=production && npm install @xenova/transformers @anush008/tokenizers
+
+# Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Set environment variables
+# Set production environment
 ENV NODE_ENV=production
-ENV PORT=3001
 
-# Expose port
-EXPOSE 3001
-
-# Start the application
-CMD ["node", "dist/index.js"] 
+# Start production server
+CMD ["node", "dist/index.js"]

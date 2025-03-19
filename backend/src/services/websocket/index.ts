@@ -7,8 +7,6 @@
 
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import logger from '../../utils/logger';
-import { LLMService } from '../llm';
-import config from '../../config';
 
 // Temporary auth stub until we implement the full auth service
 // TODO: Replace with actual auth service import when implemented
@@ -32,8 +30,6 @@ import {
 
 // global socket server instance
 let io: SocketIOServer;
-// global LLM service instance
-let llmService: LLMService;
 
 /**
  * message types for client-server communication
@@ -52,41 +48,6 @@ export const MessageTypes = {
   ERROR: 'error',
   PONG: 'pong'
 };
-
-/**
- * initialize llm service
- */
-async function initializeLLMService(): Promise<void> {
-  if (!llmService) {
-    try {
-      llmService = new LLMService(config.llm);
-      await llmService.initialize();
-      logger.info('LLM service initialized for WebSocket integration');
-    } catch (error) {
-      logger.error('Failed to initialize LLM service for WebSocket:', error);
-      throw error;
-    }
-  }
-}
-
-/**
- * initialize socket io server
- */
-export function initialize(server): void {
-  io = new SocketIOServer(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
-    }
-  });
-
-  // Initialize LLM service
-  initializeLLMService().catch(error => {
-    logger.error('Failed to initialize LLM service:', error);
-  });
-
-  setupSocketEvents();
-}
 
 /**
  * sets up socket event listeners and handlers
@@ -228,9 +189,9 @@ const activeRequests = new Map<string, Set<string>>();
 async function handleChatRequest(
   socket: Socket, 
   data: ChatRequestMessage
-): Promise<void> {
-  const { content, conversationId, parentMessageId, model, requestId = generateRequestId() } = data;
-  const userId = socket.data.userId || 'anonymous';
+): Promise<void> { // TODO: add actual llm service integration here
+  const { content, conversationId, parentMessageId, model } = data;
+  const requestId = generateRequestId();
   
   // track this request
   trackRequest(socket.id, requestId);
@@ -240,125 +201,53 @@ async function handleChatRequest(
     socket.emit(MessageTypes.ERROR, { 
       type: MessageTypes.ERROR,
       message: 'message content is required',
-      code: 'invalid_request',
-      requestId
+      code: 'invalid_request'
     });
-    untrackRequest(socket.id, requestId);
     return;
   }
   
-  // Check if LLM service is available
-  if (!llmService) {
-    try {
-      await initializeLLMService();
-    } catch (error) {
-      socket.emit(MessageTypes.ERROR, {
-        type: MessageTypes.ERROR,
-        message: 'LLM service unavailable',
-        code: 'service_unavailable',
-        requestId
-      });
-      untrackRequest(socket.id, requestId);
-      return;
-    }
-  }
+  // todo: implement actual llm service integration here
+  // for now, just echo back the request with simulated chunks
   
-  try {
-    // Convert WebSocket to required format for LLM service
-    const ws = {
-      send: (data: string) => {
-        // Check if request is still active before sending anything
-        if (!isRequestActive(socket.id, requestId)) return;
-        
-        const parsed = JSON.parse(data);
-        switch (parsed.type) {
-          case 'token':
-            socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
-              requestId,
-              content: parsed.content,
-              conversationId,
-              modelId: model
-            });
-            break;
-          case 'stream_start':
-            socket.emit('stream_start', {
-              requestId,
-              conversationId,
-              messageId: parsed.messageId
-            });
-            break;
-          case 'stream_end':
-            socket.emit(MessageTypes.CHAT_RESPONSE_END, {
-              requestId,
-              conversationId,
-              content: parsed.content
-            });
-            // Cleanup request tracking
-            untrackRequest(socket.id, requestId);
-            break;
-          case 'stream_error':
-            socket.emit(MessageTypes.ERROR, {
-              type: MessageTypes.ERROR,
-              message: parsed.error,
-              code: 'llm_error',
-              requestId
-            });
-            // Cleanup request tracking
-            untrackRequest(socket.id, requestId);
-            break;
-          case 'stream_cancelled':
-            socket.emit('stream_cancelled', {
-              requestId,
-              conversationId
-            });
-            // Cleanup request tracking
-            untrackRequest(socket.id, requestId);
-            break;
-          default:
-            // Pass through any other message types
-            socket.emit(parsed.type, {
-              ...parsed,
-              requestId
-            });
-        }
-      },
-      on: (event: string, callback: Function) => {
-        // Add event listeners for the custom WebSocket object
-        // Not needed in this implementation since we're using Socket.io
-      }
-    } as unknown as WebSocket;
+  // simulate streaming chunks
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
     
-    // Call LLM service with WebSocket for streaming
-    const response = await llmService.chat({
-      sessionId: conversationId,
-      message: content,
-      parentMessageId,
-      websocket: ws,
-      callbacks: {
-        onStart: () => {
-          // Could emit additional events here
-        },
-        onError: (error) => {
-          logger.error(`LLM error for request ${requestId}:`, error);
-        }
-      }
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'This is ',
+      conversationId
+    });
+  }, 500);
+  
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
+    
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'a simulated ',
+      conversationId
+    });
+  }, 1000);
+  
+  setTimeout(() => {
+    if (!isRequestActive(socket.id, requestId)) return;
+    
+    socket.emit(MessageTypes.CHAT_RESPONSE_CHUNK, {
+      requestId,
+      content: 'response from the LLM service.',
+      conversationId
     });
     
-    // The completion is handled by the streaming mechanism
-    // This is only reached for non-streaming responses
-    
-  } catch (error) {
-    logger.error(`Error handling chat request ${requestId}:`, error);
-    socket.emit(MessageTypes.ERROR, {
-      type: MessageTypes.ERROR,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      code: 'processing_error',
-      requestId
+    // signal end of response
+    socket.emit(MessageTypes.CHAT_RESPONSE_END, {
+      requestId,
+      conversationId
     });
     
-    // Cleanup request tracking
+    // cleanup request tracking
     untrackRequest(socket.id, requestId);
-  }
+  }, 1500);
 }
 
 /**
@@ -392,26 +281,12 @@ async function handleHistoryRequest(socket: Socket, data: HistoryRequestMessage)
 /**
  * cancels a specific request
  */
-async function cancelRequest(socketId: string, requestId: string): Promise<void> {
-  if (isRequestActive(socketId, requestId) && llmService) {
-    // Get socket from socketId (you would need to maintain a map)
-    const socket = io.sockets.sockets.get(socketId);
+function cancelRequest(socketId: string, requestId: string): void {
+  if (isRequestActive(socketId, requestId)) {
+    untrackRequest(socketId, requestId);
+    logger.info(`request cancelled: ${requestId} for socket ${socketId}`);
     
-    if (socket) {
-      try {
-        // Cancel the stream using streaming manager
-        // This assumes the requestId from the client matches the one in streaming manager
-        // In a real implementation, you might need to map between them
-        if (llmService.streamingManager && await llmService.streamingManager.cancelStream(requestId)) {
-          socket.emit('stream_cancelled', { requestId });
-        }
-        
-        // Untrack request
-        untrackRequest(socketId, requestId);
-      } catch (error) {
-        logger.error(`Error cancelling request ${requestId}:`, error);
-      }
-    }
+    // todo: notify llm service to stop processing
   }
 }
 

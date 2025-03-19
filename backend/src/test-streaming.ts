@@ -448,6 +448,55 @@ async function testStreamingManager() {
     console.error('Concurrent streams test failed:', error);
   }
   
+  // Test 2.5: Content Accumulation
+  console.log('\n--- Test 2.5: Content Accumulation ---');
+  const accumulationMessageId = uuidv4();
+  const accWs = new MockWebSocket();
+  const accConnectionId = streamingManager.registerConnection(sessionId, accWs as any);
+  
+  try {
+    const accTokens = ['This', ' is', ' content', ' that', ' should', ' be', ' accumulated', '.'];
+    const accGenerator = createTokenGenerator(accTokens, { delay: 50 });
+    
+    console.log('Streaming tokens for content accumulation test...');
+    const accProgress = await streamingManager.streamResponse(
+      accConnectionId,
+      sessionId,
+      accumulationMessageId,
+      accGenerator,
+      { 
+        onStart: () => console.log('Accumulation test started'),
+        onToken: () => process.stdout.write('.'),
+        onComplete: () => console.log('\nAccumulation test completed')
+      }
+    );
+    
+    // Test content retrieval by requestId
+    const contentByRequestId = streamingManager.getStreamContent(accProgress.requestId);
+    console.log(`\nContent by requestId: "${contentByRequestId}"`);
+    console.assert(contentByRequestId === accTokens.join(''), 
+      'Content by requestId should match expected content');
+    
+    // Test content retrieval by messageId
+    const contentByMessageId = streamingManager.getContentByMessageId(accumulationMessageId);
+    console.log(`Content by messageId: "${contentByMessageId}"`);
+    console.assert(contentByMessageId === accTokens.join(''), 
+      'Content by messageId should match expected content');
+    
+    // Test resource cleanup
+    console.log('Testing resource cleanup...');
+    streamingManager.cleanupMessageResources(accumulationMessageId);
+    
+    // Verify content is no longer available
+    const contentAfterCleanup = streamingManager.getContentByMessageId(accumulationMessageId);
+    console.log(`Content after cleanup: ${contentAfterCleanup === null ? 'null (expected)' : 'still present (unexpected)'}`);
+    console.assert(contentAfterCleanup === null, 'Content should be null after cleanup');
+    
+    console.log('Content accumulation test completed successfully!');
+  } catch (error) {
+    console.error('Content accumulation test failed:', error);
+  }
+  
   console.log('\n=== All Tests Completed ===');
 }
 

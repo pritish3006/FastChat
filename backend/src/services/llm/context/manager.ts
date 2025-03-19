@@ -1,5 +1,5 @@
-import { TokenCounter } from '../tokens/counter';
 import { Message, ModelInfo } from '../types';
+// import { TokenCounter } from '../tokens/counter';
 import logger from '../../../utils/logger';
 
 interface ContextReservation {
@@ -26,14 +26,14 @@ interface ContextConfig {
 }
 
 export class ContextManager {
-  private tokenCounter: TokenCounter;
+  // private tokenCounter: TokenCounter;
   private config: ContextConfig;
 
   constructor(
-    tokenCounter: TokenCounter,
+    // tokenCounter: TokenCounter,
     config: Partial<ContextConfig> = {}
   ) {
-    this.tokenCounter = tokenCounter;
+    // this.tokenCounter = tokenCounter;
     
     // Default configuration
     this.config = {
@@ -126,16 +126,16 @@ export class ContextManager {
     };
   }> {
     // Get context window size and calculate reservations
-    const contextWindow = await this.tokenCounter.getContextWindowSize(modelInfo.modelId);
+    const contextWindow = modelInfo.contextWindow;
     const reservations = await this.calculateReservations(contextWindow);
 
     // Count tokens for system message if present
     let systemTokens = 0;
     if (systemMessage) {
-      systemTokens = await this.tokenCounter.countTokens(systemMessage);
-      if (systemTokens > reservations.systemMessage) {
+      // systemTokens = await this.tokenCounter.countTokens(systemMessage);
+      if (systemMessage.length > reservations.systemMessage) {
         logger.warn('System message exceeds reservation', {
-          systemTokens,
+          systemMessageLength: systemMessage.length,
           reservation: reservations.systemMessage
         });
         // Optionally handle system message truncation
@@ -143,7 +143,7 @@ export class ContextManager {
     }
 
     // Count tokens for user query
-    const queryTokens = await this.tokenCounter.countTokens(userQuery);
+    const queryTokens = Math.ceil(userQuery.length / 4); // Simple character-based estimation
     if (queryTokens > reservations.userQuery) {
       logger.warn('User query exceeds reservation', {
         queryTokens,
@@ -187,7 +187,8 @@ export class ContextManager {
 
     // Process messages from most recent to oldest
     for (const message of messages.reverse()) {
-      const messageTokens = await this.tokenCounter.countTokens(message.content);
+      // const messageTokens = await this.tokenCounter.countTokens(message.content);
+      const messageTokens = Math.ceil(message.content.length / 4); // Simple character-based estimation
       
       if (totalTokens + messageTokens <= tokenLimit) {
         selectedMessages.unshift(message); // Add to front to maintain order
@@ -206,7 +207,9 @@ export class ContextManager {
   private async countMessageTokens(messages: Message[]): Promise<number> {
     let total = 0;
     for (const message of messages) {
-      total += await this.tokenCounter.countTokens(message.content);
+      // total += await this.tokenCounter.countTokens(message.content);
+      // Use character-based estimation instead
+      total += Math.ceil(message.content.length / 4);
     }
     return total;
   }

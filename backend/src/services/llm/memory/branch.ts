@@ -528,7 +528,7 @@ export class BranchManager {
   /**
    * Saves a branch
    */
-  private async saveBranch(branch: Branch): Promise<void> {
+  async saveBranch(branch: Branch): Promise<void> {
     const key = this.redis.buildKey('branch', branch.id);
     await this.redis.getClient()?.set(key, JSON.stringify(branch));
   }
