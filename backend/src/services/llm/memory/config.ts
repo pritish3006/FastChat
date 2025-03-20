@@ -23,13 +23,14 @@ export interface MemoryConfig {
   };
 }
 
-export interface RedisConfig extends RedisOptions {
+/**
+ * Redis memory configuration
+ */
+export interface RedisConfig {
   enabled: boolean;
-  url?: string;              // Redis connection URL
-  prefix?: string;           // Key prefix for Redis keys
-  maxRetries?: number;       // Maximum number of connection retries
-  retryTimeout?: number;     // Time between retries in ms
-  sessionTTL?: number;       // Session TTL in seconds
+  url: string;
+  prefix?: string;
+  sessionTTL: number;
 }
 
 export interface DatabaseConfig {
@@ -66,48 +67,25 @@ export interface EmbeddingServiceConfig {
   };
 }
 
-export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+/**
+ * Default memory configuration
+ */
+export const DEFAULT_MEMORY_CONFIG = {
   redis: {
     enabled: true,
+    url: 'redis://localhost:6379',
     prefix: 'fast-chat:memory:',
-    maxRetries: 3,
-    retryTimeout: 1000,
-    sessionTTL: 24 * 60 * 60,  // 24 hours
-    // Redis client options
-    maxRetriesPerRequest: 3,
-    enableReadyCheck: true,
-    enableOfflineQueue: true,
-    connectTimeout: 10000,
-    disconnectTimeout: 2000,
-    commandTimeout: 5000,
-    keepAlive: 30000,
-    noDelay: true,
+    sessionTTL: 24 * 60 * 60 // 24 hours
   },
   database: {
-    enabled: false,
-    type: 'supabase',
+    type: 'supabase' as const,
     url: '',
-    messagesTable: 'messages',
-    sessionsTable: 'chat_sessions',
-  },
-  vectorStore: {
-    enabled: false,
-    type: 'supabase',
-    url: '',
-    tableName: 'message_embeddings',
-    dimensions: 1536
-  },
-  persistence: {
-    enabled: true,
-    persistImmediately: true,
-    maxRedisAge: 24 * 60 * 60, // 24 hours
-    batchSize: 100,
-    cleanupInterval: 60 * 60 // 1 hour
+    key: '',
+    enabled: false
   },
   defaults: {
-    sessionTTL: 24 * 60 * 60,     // 24 hours
-    maxContextSize: 50,           // 50 messages
-    maxMessageSize: 32 * 1024,    // 32KB
-    contextWindowPercentage: 80,  // Use 80% of model's context length for memory
-  },
+    maxContextSize: 4000,
+    sessionTTL: 24 * 60 * 60, // 24 hours
+    maxMessageSize: 32000
+  }
 }; 

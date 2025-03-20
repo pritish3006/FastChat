@@ -6,7 +6,6 @@
  */
 
 import { StringValidation } from "zod";
-import { ChatMessage } from "../services/llm";
 
 /**
  * base interface for all websocket messages

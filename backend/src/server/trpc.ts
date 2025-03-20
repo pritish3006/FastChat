@@ -19,11 +19,18 @@ interface CreateContextOptions {
 }
 
 // Create context based on request type
-export async function createContext(opts: CreateContextOptions) {
+export async function createContext(opts: CreateHTTPContextOptions) {
   return {
     // Add any context you want to pass to your procedures
-    wsContext: opts.wsContext,
-    httpContext: opts.httpContext
+    httpContext: opts
+  };
+}
+
+// Create WebSocket context
+export async function createWSContext(opts: CreateWSSContextFnOptions) {
+  return {
+    // Add any context you want to pass to your procedures
+    wsContext: opts
   };
 }
 

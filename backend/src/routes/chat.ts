@@ -14,6 +14,7 @@ import { ApiError } from '../middleware/errorHandler';
 import logger from '../utils/logger';
 import { LLMService } from '../services/llm';
 import { config } from '../config';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = Router();
 
@@ -25,6 +26,194 @@ router.use(chatLimiter);
 
 // route to send a message and get a streaming response
 router.post('/message', sendMessage);
+
+// route for SSE streaming
+router.get('/stream', async (req, res, next) => {
+  const requestId = uuidv4();
+  
+  try {
+    // Get query parameters
+    const content = req.query.content as string;
+    const conversationId = req.query.conversationId as string;
+    const systemPrompt = req.query.systemPrompt as string;
+    const temperature = parseFloat(req.query.temperature as string) || 0.7;
+    const maxTokens = parseInt(req.query.maxTokens as string) || 2000;
+    
+    if (!content) {
+      return next(new ApiError(400, 'content is required'));
+    }
+
+    // Get or create a session id
+    const userId = req.user?.id || 'anonymous';
+    let actualSessionId = conversationId;
+    
+    if (!actualSessionId && req.user) {
+      try {
+        // create a new session if user is authenticated
+        const newSession = await chatSessions.create({
+          userId: req.user.id,
+          title: content.substring(0, 50),
+          modelId: 'gpt-3.5-turbo' // Default to OpenAI for SSE
+        });
+        actualSessionId = newSession.id;
+      } catch (error) {
+        logger.warn('Failed to create chat session, using temporary session', {
+          error: error instanceof Error ? error.message : String(error),
+          userId
+        });
+        actualSessionId = `temp-${uuidv4()}`;
+      }
+    }
+    
+    // set response headers for streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable Nginx buffering
+    
+    // Important: disable Node.js compression which can cause buffering issues
+    if (res.flush) {
+      res.flush();
+    }
+    
+    // Debug: log that we're starting the stream
+    logger.debug('Starting SSE stream', { requestId });
+    
+    // Initialize LLM service with Redis memory
+    const llmService = new LLMService({
+      model: {
+        provider: 'openai',
+        modelId: 'gpt-3.5-turbo',
+        apiKey: config.llm.openaiApiKey,
+        temperature,
+        maxTokens
+      },
+      memory: {
+        redis: {
+          enabled: true,
+          url: config.redis.url,
+          prefix: config.redis.prefix,
+          sessionTTL: config.redis.sessionTTL
+        }
+      }
+    });
+
+    // Initialize the service
+    await llmService.initialize();
+    
+    // start stream with metadata
+    res.write(`event: metadata\ndata: ${JSON.stringify({
+      type: 'metadata',
+      request_id: requestId,
+      model: 'gpt-3.5-turbo',
+      session_id: actualSessionId
+    })}\n\n`);
+    
+    // Ensure buffer is flushed immediately
+    if (res.flush) {
+      res.flush();
+    }
+    
+    // Handle client disconnection
+    req.on('close', () => {
+      logger.info('Client closed connection', { requestId });
+      if (activeStreams.has(requestId)) {
+        const stream = activeStreams.get(requestId);
+        if (stream && typeof stream.abort === 'function') {
+          stream.abort();
+          logger.info('Stream aborted due to client disconnect', { requestId });
+        }
+        activeStreams.delete(requestId);
+      }
+    });
+    
+    // Set up streaming callbacks
+    const callbacks = {
+      onToken: (token: string) => {
+        res.write(`event: content\ndata: ${JSON.stringify({
+          type: 'content',
+          content: token
+        })}\n\n`);
+        if (res.flush) res.flush();
+      },
+      onComplete: () => {
+        res.write(`event: done\ndata: ${JSON.stringify({
+          type: 'done',
+          request_id: requestId
+        })}\n\n`);
+        if (res.flush) res.flush();
+        res.end();
+      },
+      onError: (error: Error) => {
+        logger.error('Error in stream', { error: error.message, requestId });
+        res.write(`event: error\ndata: ${JSON.stringify({
+          type: 'error',
+          error: error.message
+        })}\n\n`);
+        if (res.flush) res.flush();
+        res.end();
+      }
+    };
+
+    // Send the message
+    try {
+      const messages = [{
+        role: 'user',
+        content
+      }];
+
+      // Create a generator for streaming responses
+      const streamGenerator = llmService.model.streamChatCompletion(
+        messages,
+        {
+          temperature,
+          maxTokens
+        },
+        {
+          onToken: (token: string) => {
+            res.write(`event: content\ndata: ${JSON.stringify({
+              type: 'content',
+              content: token
+            })}\n\n`);
+            if (res.flush) res.flush();
+          },
+          onComplete: () => {
+            res.write(`event: done\ndata: ${JSON.stringify({
+              type: 'done',
+              request_id: requestId
+            })}\n\n`);
+            if (res.flush) res.flush();
+            res.end();
+          },
+          onError: (error: Error) => {
+            logger.error('Error in stream', { error: error.message, requestId });
+            res.write(`event: error\ndata: ${JSON.stringify({
+              type: 'error',
+              error: error.message
+            })}\n\n`);
+            if (res.flush) res.flush();
+            res.end();
+          }
+        }
+      );
+
+      // Process the stream
+      for await (const chunk of streamGenerator) {
+        if (chunk.type === 'error') {
+          throw chunk.error;
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to generate response', {
+        error: error instanceof Error ? error.message : String(error),
+        requestId
+      });
+      next(new ApiError(500, 'Failed to generate response'));
+    }
+  } catch (error) {
+    next(error);
+  }
+});
 
 // route to get available models
 router.get('/models', getModels);
@@ -237,4 +426,27 @@ router.post('/search/:sessionId', async (req, res, next) => {
   }
 });
 
-export default router; 
+// Set session model
+router.post('/sessions/:sessionId/model', async (req, res, next) => {
+  const { sessionId } = req.params;
+  const { modelId } = req.body;
+
+  try {
+    // get session to verify ownership
+    const session = await chatSessions.getById(sessionId);
+    
+    if (!session) {
+      return next(new ApiError(404, 'chat session not found'));
+    }
+
+    // update the session model
+    await chatSessions.update(sessionId, { modelId });
+
+    return res.status(200).json({ success: true, message: 'Session model updated.' });
+  } catch (error) {
+    logger.error('Error setting session model:', error);
+    next(error instanceof ApiError ? error : new ApiError(500, 'Failed to set session model.'));
+  }
+});
+
+export default router;

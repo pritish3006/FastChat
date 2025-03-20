@@ -22,6 +22,7 @@ export interface OllamaModel {
     families: string[];
     parameter_size: string;
     quantization_level: string;
+    format: string;
   };
 }
 
@@ -59,6 +60,36 @@ export interface StreamController extends EventEmitter {
   abort: () => void;
 }
 
+// Hardcoded models we know exist in our Ollama service
+const AVAILABLE_MODELS: OllamaModel[] = [
+  {
+    name: 'llama3.2:latest',
+    modified_at: new Date().toISOString(),
+    size: 2.0 * 1024 * 1024 * 1024, // 2.0 GB
+    digest: 'a80c4f17acd5',
+    details: {
+      family: 'llama',
+      parameter_size: '3.2B',
+      quantization_level: 'Q4_K_M',
+      format: 'gguf',
+      families: ['llama']
+    }
+  },
+  {
+    name: 'deepseek-r1:latest',
+    modified_at: new Date().toISOString(),
+    size: 4.7 * 1024 * 1024 * 1024, // 4.7 GB
+    digest: '0a8c26691023',
+    details: {
+      family: 'deepseek',
+      parameter_size: '7.6B',
+      quantization_level: 'Q4_K_M',
+      format: 'gguf',
+      families: ['deepseek']
+    }
+  }
+];
+
 // ollama service implementation
 export const ollamaService = {
   /**
@@ -69,36 +100,75 @@ export const ollamaService = {
   /**
    * fetches a list of available models from ollama
    */
-  async listModels(baseUrl?: string): Promise<OllamaModel[]> {
+  async listModels(): Promise<OllamaModel[]> {
+    logger.debug('=== [OLLAMA SERVICE] Listing models ===', {
+      baseUrl: this.baseUrl,
+      timestamp: new Date().toISOString()
+    });
+
     try {
-      const url = baseUrl || this.baseUrl;
-      logger.info('Fetching models from Ollama', { url });
-      
-      const response = await fetch(`${url}/api/tags`);
-      
+      const response = await fetch(`${this.baseUrl}/api/tags`);
       if (!response.ok) {
-        logger.error('Ollama API error', { 
-          status: response.status, 
+        const errorText = await response.text();
+        logger.error('=== [OLLAMA SERVICE] Error listing models ===', {
+          status: response.status,
           statusText: response.statusText,
-          url 
+          errorBody: errorText,
+          baseUrl: this.baseUrl
         });
-        throw new Error(`ollama returned ${response.status}: ${response.statusText}`);
+        throw new ApiError('Failed to list Ollama models', response.status);
       }
-      
+
       const data = await response.json();
-      logger.info('Successfully fetched models from Ollama', { 
+      logger.debug('=== [OLLAMA SERVICE] Models listed successfully ===', {
         modelCount: data.models?.length || 0,
-        url
+        models: data.models?.map((m: any) => m.name)
       });
       return data.models || [];
     } catch (error) {
-      logger.error('Failed to fetch models from Ollama', { 
-        error, 
-        url: baseUrl || this.baseUrl,
-        errorMessage: error.message,
-        errorStack: error.stack
+      logger.error('=== [OLLAMA SERVICE] Exception listing models ===', {
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : error,
+        baseUrl: this.baseUrl
       });
-      throw new ApiError(502, 'failed to connect to ollama service');
+      throw error;
+    }
+  },
+  
+  /**
+   * validates and returns the exact model name from available models
+   */
+  async validateModel(model: string): Promise<string> {
+    logger.debug('=== [OLLAMA SERVICE] Validating model ===', {
+      model,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      const models = await this.listModels();
+      const modelExists = models.some(m => m.name === model);
+      
+      logger.debug('=== [OLLAMA SERVICE] Model validation result ===', {
+        model,
+        exists: modelExists,
+        availableModels: models.map(m => m.name)
+      });
+
+      if (!modelExists) {
+        throw new ApiError(`Model ${model} not found`, 404);
+      }
+      return model;
+    } catch (error) {
+      logger.error('=== [OLLAMA SERVICE] Model validation failed ===', {
+        model,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : error
+      });
+      throw error;
     }
   },
   
@@ -106,118 +176,75 @@ export const ollamaService = {
    * generates a completion using ollama's api with streaming
    * returns an event emitter that emits 'data', 'end', and 'error' events
    */
-  async generateCompletion(
-    params: OllamaCompletionRequest,
-    baseUrl?: string
-  ): Promise<StreamController> {
-    // create a new event emitter for the stream
-    const streamController = new EventEmitter() as StreamController;
-    
-    // create abort controller for the fetch request
-    const abortController = new AbortController();
-    streamController.abort = () => abortController.abort();
-    
-    // ensure streaming is enabled
-    params.stream = true;
-    
+  async generateCompletion(request: OllamaCompletionRequest): Promise<OllamaCompletionResponse> {
+    logger.debug('=== [OLLAMA SERVICE] Generating completion ===', {
+      model: request.model,
+      promptLength: request.prompt.length,
+      stream: request.stream,
+      options: request.options,
+      timestamp: new Date().toISOString()
+    });
+
     try {
-      const url = baseUrl || this.baseUrl;
-      const response = await fetch(`${url}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(params),
-        signal: abortController.signal,
+        body: JSON.stringify(request)
       });
-      
-      if (!response.ok) {
-        throw new Error(`ollama returned ${response.status}: ${response.statusText}`);
-      }
-      
-      if (!response.body) {
-        throw new Error('response body is null');
-      }
-      
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let context: number[] = [];
 
-      // process the stream
-      const processStream = async () => {
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            
-            if (done) {
-              streamController.emit('end', { context });
-              break;
-            }
-            
-            // decode and process chunk
-            buffer += decoder.decode(value, { stream: true });
-            
-            // process complete json objects from buffer
-            let startIdx = 0;
-            let endIdx = buffer.indexOf('\n', startIdx);
-            
-            while (endIdx > -1) {
-              const chunk = buffer.substring(startIdx, endIdx);
-              startIdx = endIdx + 1;
-              endIdx = buffer.indexOf('\n', startIdx);
-              
-              if (chunk.trim()) {
-                try {
-                  const data = JSON.parse(chunk) as OllamaCompletionResponse;
-                  
-                  // emit data event with token and response object
-                  streamController.emit('data', data);
-                  
-                  // save context for future use
-                  if (data.context) {
-                    context = data.context;
-                  }
-                  
-                  // emit end event when done
-                  if (data.done) {
-                    streamController.emit('end', { context });
-                  }
-                } catch (e) {
-                  logger.warn('failed to parse json from ollama', { 
-                    chunk, 
-                    error: e 
-                  });
-                }
-              }
-            }
-            
-            // keep any remaining incomplete chunk in buffer
-            buffer = buffer.substring(startIdx);
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error('=== [OLLAMA SERVICE] Completion generation failed ===', {
+          status: response.status,
+          statusText: response.statusText,
+          errorBody: errorText,
+          request: {
+            model: request.model,
+            promptLength: request.prompt.length,
+            stream: request.stream,
+            options: request.options
           }
-        } catch (error) {
-          if ((error as any).name === 'AbortError') {
-            streamController.emit('abort');
-          } else {
-            logger.error('error processing ollama stream', { error });
-            streamController.emit('error', error);
-          }
-        }
-      };
-      
-      // start processing the stream
-      processStream();
-      return streamController;
-      
-    } catch (error) {
-      if ((error as any).name === 'AbortError') {
-        streamController.emit('abort');
-      } else {
-        logger.error('failed to connect to ollama', { error });
-        streamController.emit('error', new ApiError(502, 'failed to connect to ollama service'));
+        });
+        throw new ApiError('Failed to generate completion', response.status);
       }
-      
-      return streamController;
+
+      const data = await response.json();
+      logger.debug('=== [OLLAMA SERVICE] Completion generated successfully ===', {
+        model: data.model,
+        responseLength: data.response?.length,
+        done: data.done,
+        totalDuration: data.total_duration
+      });
+      return data;
+    } catch (error) {
+      logger.error('=== [OLLAMA SERVICE] Exception generating completion ===', {
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : error,
+        request: {
+          model: request.model,
+          promptLength: request.prompt.length,
+          stream: request.stream,
+          options: request.options
+        }
+      });
+      throw error;
     }
   }
 }; 
+
+// Test function to directly test listModels
+export async function testListModels() {
+  try {
+    logger.info('Testing hardcoded models list');
+    const models = await ollamaService.listModels();
+    logger.info('Successfully retrieved models:', { models });
+    return models;
+  } catch (error) {
+    logger.error('Error in testListModels:', error);
+    throw error;
+  }
+} 

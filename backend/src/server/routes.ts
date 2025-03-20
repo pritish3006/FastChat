@@ -5,69 +5,89 @@
  * provides versioning and organization of routes
  */
 
-import { Application, Request, Response, Router, NextFunction } from 'express';
-import { config } from '../config/index';
+import express, { Application } from 'express';
+import logger from '../utils/logger';
+import apiRoutes from '../routes/index';
 
 /**
- * registers the health check endpoint
- */
-export function registerHealthEndpoint(app: Application): void {
-  app.get('/health', (req: Request, res: Response) => {
-    res.json({
-      status: 'ok',
-      environment: config.server.nodeEnv,
-      timestamp: new Date().toISOString(),
-      version: process.env.npm_package_version || 'unknown'
-    });
-  });
-}
-
-/**
- * registers the main api routes
- */
-export function registerApiRoutes(app: Application): void {
-  // Import routes
-  const chatRoutes = require('../routes/chat').default;
-  const authRoutes = require('../routes/auth').default;
-  const modelsRoutes = require('../routes/models').default;
-  
-  // create API router
-  const apiRouter = Router();
-  
-  // register API routes
-  apiRouter.use('/chat', chatRoutes);
-  apiRouter.use('/auth', authRoutes);
-  apiRouter.use('/models', modelsRoutes);
-  
-  // apply API router with version prefix
-  app.use('/api/v1', apiRouter);
-  
-  // redirect root API to v1
-  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/') {
-      return res.redirect('/api/v1');
-    }
-    next();
-  });
-}
-
-/**
- * registers error handling routes (404 handler, etc.)
- */
-export function registerErrorRoutes(app: Application): void {
-  // 404 handler for undefined routes
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const error = new Error(`Not Found - ${req.originalUrl}`);
-    (error as any).statusCode = 404;
-    next(error);
-  });
-}
-
-/**
- * registers all routes at once
+ * registers all route handlers on the express app
  */
 export function registerAllRoutes(app: Application): void {
-  registerHealthEndpoint(app);
-  registerApiRoutes(app);
-  registerErrorRoutes(app);
+  try {
+    logger.info('Registering all routes...');
+    
+    // Mounting the main API router
+    try {
+      logger.info('Mounting API routes...');
+      app.use('/api/v1', apiRoutes);
+      logger.info('API routes mounted successfully');
+    } catch (error) {
+      logger.error('Failed to mount API routes:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace available'
+      });
+      throw error;
+    }
+    
+    // Basic health check endpoint directly on app for simplicity
+    try {
+      logger.info('Registering basic health check endpoint...');
+      app.get('/health', (req, res) => {
+        res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+      });
+      logger.info('Basic health check endpoint registered successfully');
+    } catch (error) {
+      logger.error('Failed to register basic health check endpoint:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace available'
+      });
+      throw error;
+    }
+    
+    // Root endpoint with basic info
+    try {
+      logger.info('Registering root endpoint...');
+      app.get('/', (req, res) => {
+        res.status(200).json({ 
+          service: 'fast-chat-api',
+          version: '1.0.0',
+          message: 'Welcome to Fast Chat API'
+        });
+      });
+      logger.info('Root endpoint registered successfully');
+    } catch (error) {
+      logger.error('Failed to register root endpoint:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace available'
+      });
+      throw error;
+    }
+    
+    // 404 handler for undefined routes
+    try {
+      logger.info('Registering 404 handler...');
+      app.use((req, res) => {
+        res.status(404).json({ 
+          status: 'error',
+          message: `Route not found: ${req.method} ${req.path}`
+        });
+      });
+      logger.info('404 handler registered successfully');
+    } catch (error) {
+      logger.error('Failed to register 404 handler:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace available'
+      });
+      throw error;
+    }
+    
+    logger.info('All routes registered successfully');
+  } catch (error) {
+    logger.error('Failed to register routes:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : 'No stack trace available'
+    });
+    // Rethrow so the caller knows something went wrong
+    throw error;
+  }
 } 

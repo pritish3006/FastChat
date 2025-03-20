@@ -1,8 +1,8 @@
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { BaseMessage, AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { Document } from '@langchain/core/documents';
-import { WebSocket } from 'ws';
+import { Socket } from 'socket.io';
 import { EventEmitter } from 'events';
+import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 // Stream controller for handling event-based streaming responses
 export interface StreamController extends EventEmitter {
@@ -17,11 +17,16 @@ export interface BaseModelProperties {
 }
 
 // Configuration interface - what users provide
-export interface ModelConfig extends BaseModelProperties {
+export interface ModelConfig {
+  provider: 'ollama' | 'openai' | 'anthropic' | 'langchain';
+  apiKey?: string;
+  modelId: string;
+  baseURL?: string;
   temperature?: number;
   topP?: number;
-  apiKey?: string;
   topK?: number;
+  maxTokens?: number;
+  systemPrompt?: string;
 }
 
 // Runtime model information
@@ -41,27 +46,26 @@ export interface ModelInfo {
   };
 }
 
-// Full model representation for registry and fallback management
-export interface Model extends BaseModelProperties {
+// Simple model interface for provider listings
+export interface Model {
+  id: string;
   name: string;
+  contextLength: number;
+  provider?: string;
   description?: string;
-  config: Omit<ModelConfig, keyof BaseModelProperties>;  // Avoid duplication
-  info: ModelInfo;
-  metadata?: {
-    tags?: string[];
-    version?: string;
-    lastUpdated?: number;
-    usageCount?: number;
-  };
 }
 
+// Stream callbacks for real-time streaming responses
 export interface StreamCallbacks {
-  onToken?: (token: string) => void;
   onStart?: () => void;
+  onToken?: (token: string) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  onMetadata?: (metadata: Record<string, unknown>) => void;
+  websocket?: Socket;
 }
 
+// Redis memory persistence configuration
 export interface PersistenceConfig {
   enabled: boolean;
   persistImmediately: boolean;
@@ -70,6 +74,7 @@ export interface PersistenceConfig {
   cleanupInterval: number;
 }
 
+// LangChain memory configuration
 export interface LangChainMemoryConfig {
   enabled: boolean;
   memory?: {
@@ -81,6 +86,7 @@ export interface LangChainMemoryConfig {
   model?: BaseChatModel;
 }
 
+// Memory configuration
 export interface MemoryConfig {
   redis: {
     enabled: boolean;
@@ -110,6 +116,7 @@ export interface MemoryConfig {
   };
 }
 
+// LangChain configuration
 export interface LangChainConfig {
   enabled: boolean;
   memory?: {
@@ -129,6 +136,7 @@ export interface LangChainConfig {
   };
 }
 
+// LLM service configuration
 export interface LLMServiceConfig {
   model: ModelConfig;
   memory?: MemoryConfig;
@@ -141,75 +149,68 @@ export interface LLMServiceConfig {
   supabaseClient?: any; // Added for database operations
 }
 
+// Chat parameters
 export interface ChatParams {
-  sessionId?: string;        // Optional: Will create new session if not provided
+  sessionId: string;
   message: string;
-  branchId?: string;        // Optional: For branched conversations
-  parentMessageId?: string;  // Optional: For threaded responses
+  branchId?: string;
+  parentMessageId?: string;
   systemPrompt?: string;
-  chainType?: 'conversation' | 'rag' | 'router';
-  callbacks?: StreamCallbacks;
-  websocket?: WebSocket;     // Optional: For streaming responses
-  signal?: AbortSignal;      // Optional: For cancelling requests
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+  callbacks?: {
+    onToken?: (token: string) => void;
+    onComplete?: () => void;
+    onError?: (error: Error) => void;
+  };
+  websocket?: Socket;
 }
 
+// Chat response interface
 export interface ChatResponse {
-  text: string;
-  sessionId: string;        // Always return sessionId for tracking
-  messageId: string;        // Unique ID for the generated message
-  branchId?: string;       // If part of a branch
-  sourceDocuments?: Array<{
-    content: string;
-    metadata: Record<string, any>;
-  }>;
-  metadata?: {
-    model: string;
-    provider: string;
-    tokens?: {
+  message: string;
+  sessionId: string;
+  messageId: string;
+  metadata: {
+    tokenUsage: {
       prompt: number;
       completion: number;
       total: number;
     };
-    branchInfo?: {
-      depth: number;
-      parentMessageId?: string;
+    model: string;
+    streamProgress: {
+      tokensReceived: number;
+      duration: number;
+      status: 'streaming' | 'complete' | 'error';
     };
   };
 }
 
-export interface BaseModelProvider {
-  initialize(config: ModelConfig): Promise<BaseChatModel>;
-  validateConfig(config: ModelConfig): void;
-  generateStream?(params: ChatParams): AsyncIterator<any>;
-  generateChatCompletion(params: {
-    messages: Array<{ role: string; content: string }>;
-    systemPrompt?: string;
-    model?: string;
-    temperature?: number;
-    maxTokens?: number;
-    stream?: boolean;
-    signal?: AbortSignal;
-  }): Promise<{ text: string } | StreamController>;
-  modelId?: string;
-  asLangChainModel(options?: {
-    temperature?: number;
-    maxTokens?: number;
-    streaming?: boolean;
-  }): BaseChatModel;
+// Completion options
+export interface CompletionOptions {
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+  stream?: boolean;
+  stop?: string[];
+  systemPrompt?: string;
 }
 
-// Session Management
+// Session interface
 export interface Session {
   id: string;
   createdAt: number;
   lastAccessedAt: number;
   messageCount: number;
-  branches: string[];  // Array of branch IDs
-  modelId: string;
+  branches?: string[];  // Array of branch IDs
+  modelId?: string;
   modelConfig?: ModelConfig;
 }
 
-// Context Management
+// Context interface
 export interface Context {
   messages: Message[];
   systemPrompt?: string;
@@ -221,36 +222,23 @@ export interface Context {
   };
 }
 
-// Message Structure
+// Message roles
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+// Message interface
 export interface Message {
   id: string;
-  sessionId: string;
   role: MessageRole;
   content: string;
-  timestamp: number;
-  version: number;
+  createdAt: number;
+  sessionId: string;
   branchId?: string;
-  parentId?: string;
-  metadata?: {
-    tokens?: number;
-    embedding?: number[];
-    edited?: boolean;
-    originalContent?: string;
-    originalMessageId?: string;
-    model?: string;
-    persistedAt?: number;
-    similarity?: number;
-    mergedFrom?: string;
-    userId?: string;
-    parentId?: string;
-    source?: string;
-    [key: string]: any; // Allow additional metadata properties
-  };
+  timestamp?: number;
+  metadata?: Record<string, unknown>;
+  version?: number;
 }
 
-// LangChain specific types
+// LangChain memory variable
 export interface LangChainMemoryVariable {
   history: Array<any>; // LangChain message types
   additionalKwargs?: {
@@ -258,6 +246,7 @@ export interface LangChainMemoryVariable {
   };
 }
 
+// Chain input
 export interface ChainInput {
   question: string;
   history?: Array<any>;
@@ -265,6 +254,7 @@ export interface ChainInput {
   systemPrompt?: string;
 }
 
+// Chain output
 export interface ChainOutput {
   text: string;
   sourceDocuments?: Array<{
@@ -278,6 +268,7 @@ export interface ChainOutput {
   };
 }
 
+// Branch interface
 export interface Branch {
   id: string;
   sessionId: string;
@@ -294,4 +285,99 @@ export interface Branch {
   branchOrder?: number;
   colorHex?: string;
   branchType?: string;
+  originMessageId?: string;
+  depth?: number;
+  isArchived?: boolean;
+}
+
+// Branch history entry
+export interface BranchHistoryEntry {
+  timestamp: number;
+  action: string;
+  branchId: string;
+  branchName: string;
+  messageId?: string;
+  metadata?: Record<string, any>;
+}
+
+// Stream chunk
+export interface StreamChunk {
+  type: 'token' | 'error' | 'complete';
+  content?: string;
+  error?: Error;
+  metadata?: Record<string, unknown>;
+}
+
+// Stream options
+export interface StreamOptions {
+  maxDuration?: number;
+  timeout?: number;
+  retryAttempts?: number;
+  rateLimitPerMinute?: number;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  topK?: number;
+}
+
+// Stream session
+export interface StreamSession {
+  id: string;
+  connectionId: string;
+  sessionId: string;
+  messageId: string;
+  startTime: number;
+  status: 'starting' | 'streaming' | 'done' | 'error' | 'cancelled' | 'timeout';
+  tokensReceived: number;
+  duration: number;
+  content: string;
+  error: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+// Stream adapter
+export interface StreamAdapter {
+  initialize(): Promise<void>;
+  stream(input: string, options?: StreamOptions): AsyncIterator<StreamChunk>;
+  cleanup(): Promise<void>;
+}
+
+// Chat completion parameters
+export interface ChatCompletionParams {
+  messages: Array<{
+    role: 'system' | 'user' | 'assistant' | 'function' | 'tool';
+    content: string;
+    name?: string;
+  }>;
+  systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  stream?: boolean;
+  signal?: AbortSignal;
+}
+
+// Redis config interface
+export interface RedisConfig {
+  enabled: boolean;
+  url: string;
+  prefix?: string;
+  sessionTTL: number;
+}
+
+// Redis manager interface
+export interface RedisManager {
+  getSession(sessionId: string): Promise<Session | null>;
+  setSession(sessionId: string, session: Session): Promise<void>;
+  updateSession(sessionId: string, update: Partial<Session>): Promise<void>;
+  deleteSession(sessionId: string): Promise<void>;
+  
+  getMessage(messageId: string): Promise<Message | null>;
+  getMessages(sessionId: string, branchId?: string): Promise<Message[]>;
+  storeMessage(message: Message): Promise<void>;
+  updateMessage(messageId: string, update: Partial<Message>): Promise<void>;
+  deleteMessage(messageId: string): Promise<void>;
+  
+  initialize(): Promise<void>;
 } 

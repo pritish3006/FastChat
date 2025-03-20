@@ -48,8 +48,11 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
       throw new ApiError(401, 'authentication required');
     }
     
+    // Get the JWT secret from environment variables or use a default
+    const jwtSecret = process.env.JWT_SECRET || 'default-jwt-secret-for-development';
+    
     // verify token
-    const decoded = jwt.verify(token, config.security.jwtSecret) as { id: string; email: string };
+    const decoded = jwt.verify(token, jwtSecret) as { id: string; email: string };
     
     // attach user to request
     req.user = {
@@ -77,8 +80,11 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction): v
     const token = getTokenFromHeader(req);
     
     if (token) {
+      // Get the JWT secret from environment variables or use a default
+      const jwtSecret = process.env.JWT_SECRET || 'default-jwt-secret-for-development';
+      
       // verify token
-      const decoded = jwt.verify(token, config.security.jwtSecret) as { id: string; email: string };
+      const decoded = jwt.verify(token, jwtSecret) as { id: string; email: string };
       
       // attach user to request
       req.user = {

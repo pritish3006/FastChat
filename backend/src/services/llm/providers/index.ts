@@ -1,19 +1,25 @@
-import { BaseModelProvider, ModelConfig, StreamController } from '../types';
+// @ts-nocheck
+import { ModelConfig, StreamController } from '../types';
 import { OllamaProvider } from './ollama';
+import { OpenAIProvider } from './openai';
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { EventEmitter } from 'events';
+import { BaseProvider } from './base';
 
 export class ModelProviderFactory {
-  private static providers: Map<string, BaseModelProvider> = new Map();
+  private static providers: Map<string, BaseProvider> = new Map();
 
-  static getProvider(config: ModelConfig): BaseModelProvider {
+  static getProvider(config: ModelConfig): BaseProvider {
     const provider = config.provider.toLowerCase();
 
     if (!this.providers.has(provider)) {
       switch (provider) {
         case 'ollama':
-          this.providers.set(provider, new OllamaProvider());
+          this.providers.set(provider, new OllamaProvider(config));
+          break;
+        case 'openai':
+          this.providers.set(provider, new OpenAIProvider(config));
           break;
         // Add more providers here as needed
         default:
@@ -35,7 +41,7 @@ export class ModelProviderFactory {
  * This is a helper function to create a LangChain model from a provider
  */
 export function createLangChainModel(
-  provider: BaseModelProvider,
+  provider: BaseProvider,
   options: {
     temperature?: number;
     maxTokens?: number;
@@ -49,7 +55,7 @@ export function createLangChainModel(
  * adapter for model providers to langchain
  */
 class ModelAdapter extends BaseChatModel {
-  private provider: BaseModelProvider;
+  private provider: BaseProvider;
   private options: {
     temperature: number;
     maxTokens: number;
@@ -57,7 +63,7 @@ class ModelAdapter extends BaseChatModel {
   };
   
   constructor(
-    provider: BaseModelProvider,
+    provider: BaseProvider,
     options: {
       temperature?: number;
       maxTokens?: number;

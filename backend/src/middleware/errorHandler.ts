@@ -51,8 +51,13 @@ export class ApiError extends Error {
     /**
      * create a not found error (404)
      */
-    static noFound(message = "resource not found", options?: {code?: string, context?: Record<string, unknown>}): ApiError {
+    static notFound(message = "resource not found", options?: {code?: string, context?: Record<string, unknown>}): ApiError {
         return new ApiError(404, message, options);
+    }
+
+    // Keep backward compatibility for old method name
+    static noFound(message = "resource not found", options?: {code?: string, context?: Record<string, unknown>}): ApiError {
+        return ApiError.notFound(message, options);
     }
 
     /**
@@ -65,14 +70,14 @@ export class ApiError extends Error {
     /**
      * create an unauthorized error (401)
      */
-    static unauthorized(message = "unauthorized", options: {code?: string, context?: Record<string, unknown>}): ApiError {
+    static unauthorized(message = "unauthorized", options?: {code?: string, context?: Record<string, unknown>}): ApiError {
         return new ApiError(401, message, options);
     }
 
     /**
      * create a forbidden error (403)
      */
-    static forbidden(message = "forbidden", options: {code?: string, context?: Record<string, unknown>}): ApiError {
+    static forbidden(message = "forbidden", options?: {code?: string, context?: Record<string, unknown>}): ApiError {
         return new ApiError(403, message, options);
     }
 

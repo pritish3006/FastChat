@@ -11,12 +11,6 @@ import { config } from './config/index';
 import logger from './utils/logger';
 import { setupGracefulShutdown } from './server/lifecycle';
 
-// Import routers
-import chatsRouter from './routes/chat';
-import modelsRouter from './routes/models';
-import tokensRouter from './routes/tokens';
-import branchesRouter from './routes/branches';
-
 // Display startup validation warnings
 if (config.server.nodeEnv === 'development') {
   // Check if using fallback services
@@ -25,22 +19,37 @@ if (config.server.nodeEnv === 'development') {
   }
 }
 
-// Create Express app
-const app = createApp();
+async function main() {
+  try {
+    // Create Express app
+    const app = createApp();
 
-// Register additional routes
-app.use('/api/chats', chatsRouter);
-app.use('/api/models', modelsRouter);
-app.use('/api/tokens', tokensRouter);
-app.use('/api/branches', branchesRouter);
+    // Create and initialize the HTTP server
+    const server = await createServer(app);
+    setupGracefulShutdown(server);
 
-// Create and initialize the HTTP server
-const server = createServer(app);
-setupGracefulShutdown(server);
+    // Start the server
+    const port = config.server.port;
+    await startServer(server, port);
+  } catch (error) {
+    logger.error('Failed to start server:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : 'No stack trace available',
+      name: error instanceof Error ? error.name : 'Unknown error type'
+    });
+    process.exit(1);
+  }
+}
 
 // Start the server
-const port = config.server.port;
-startServer(server, port);
+main().catch(error => {
+  logger.error('Unhandled error:', {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : 'No stack trace available',
+    name: error instanceof Error ? error.name : 'Unknown error type'
+  });
+  process.exit(1);
+});
 
 // Export the io instance from the server module for other modules to use
 export { io } from './server/index'; 
