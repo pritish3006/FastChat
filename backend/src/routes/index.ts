@@ -2,6 +2,7 @@ import express from 'express';
 import authRoutes from './auth';
 import chatRoutes from './chat';
 import modelsRoutes from './models';
+import agentRoutes from './agent';
 // Import missing routes as empty routers
 const userPreferencesRoutes = express.Router();
 const workflowsRoutes = express.Router();
@@ -13,12 +14,20 @@ import { config } from '../config';
 
 const router = express.Router();
 
+// Debug logging
+logger.info('Initializing API routes');
+
 // API routes
 router.use('/auth', authRoutes);
 router.use('/chat', chatRoutes);
 router.use('/models', modelsRoutes);
 router.use('/user/preferences', userPreferencesRoutes);
 router.use('/workflows', workflowsRoutes);
+
+// Debug logging before mounting agent routes
+logger.info('Mounting agent routes');
+router.use('/agent', agentRoutes);
+logger.info('Agent routes mounted');
 
 // Health check endpoint
 router.get('/health', async (req, res) => {
