@@ -40,6 +40,8 @@ import type { Branch, BranchHistoryEntry } from './memory/branch';
 import { RedisManager } from './memory/redis';
 import { DEFAULT_MEMORY_CONFIG } from './memory/config';
 import { RedisMemory } from './memory/redis';
+import { WorkflowFactory } from '../agents/graph/workflow-factory';
+import { AgentContext } from '../agents/base/types';
 
 /**
  * Error class specific to LLM Service errors
@@ -74,13 +76,15 @@ export class LLMService {
   private streamingManager: StreamingManager;
   private initialized: boolean = false;
   private emitter: EventEmitter = new EventEmitter();
+  private streaming?: StreamCallbacks;
 
   /**
    * Create a new LLM service
    */
-  constructor(config: LLMServiceConfig) {
+  constructor(config: LLMServiceConfig, streaming?: StreamCallbacks) {
     this.config = config;
     this.streamingManager = new StreamingManager();
+    this.streaming = streaming;
     
     // Initialize Redis memory if config provided
     if (config.memory?.redis?.enabled) {
@@ -235,140 +239,42 @@ export class LLMService {
   /**
    * chat with the llm using a session
    */
-  async chat(params: ChatParams): Promise<ChatResponse> {
-    if (!this.model) {
-      throw new LLMServiceError('Model not initialized', 'MODEL_NOT_INITIALIZED');
-    }
-
-    const { 
-      sessionId, 
-      message: userMessageContent, 
-      branchId, 
-      systemPrompt, 
-      temperature,
-      maxTokens, 
-      callbacks,
-      websocket
-    } = params;
-
-    // Get or create session
-    await this.getOrCreateSession(sessionId);
-
-    // Prepare user message
-    const userMessage: Message = {
-      id: uuidv4(),
-      role: 'user',
-      content: userMessageContent,
-      createdAt: Date.now(),
-      sessionId,
-      branchId,
-    };
-
-    // Save user message to Redis
-    await this.redisMemory?.storeMessage(userMessage);
-
-    // Get conversation context from Redis
-    const context = await this.buildChatContext(sessionId, branchId);
-
-    let streamSession: StreamSession | undefined;
-    let assistantMessageContent = '';
-    let assistantMessage: Message;
-
+  async chat(message: string, history: any[] = []): Promise<any> {
     try {
-      // Set up streaming session for real-time updates
-      if (callbacks?.onToken || websocket) {
-        // Set up streaming through the streaming manager
-        streamSession = await this.streamingManager.streamResponse(
-          uuidv4(), // Connection ID
-          sessionId,
-          'pending', // Will be replaced with the actual message ID after generation
-          this.model.streamChatCompletion(
-            context.messages.map(msg => ({
-              role: msg.role,
-              content: msg.content
-            })),
-            {
-              temperature: temperature || this.config.model.temperature,
-              maxTokens: maxTokens || this.config.model.maxTokens
-            },
-            {
-              onToken: callbacks?.onToken,
-              onComplete: callbacks?.onComplete,
-              onError: callbacks?.onError,
-              websocket
-            }
-          ),
-          {
-            onToken: callbacks?.onToken,
-            onComplete: callbacks?.onComplete,
-            onError: callbacks?.onError,
-            websocket
-          }
-        );
-
-        // Get content from streaming session when complete
-        assistantMessageContent = await this.waitForStreamCompletion(streamSession.id);
-      } else {
-        // Non-streaming mode
-        const completion = await this.model.generateText({
-          messages: context.messages.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })),
-          systemPrompt: systemPrompt || context.systemPrompt,
-          temperature: temperature || this.config.model.temperature,
-          maxTokens: maxTokens || this.config.model.maxTokens
-        });
-
-        assistantMessageContent = completion.content;
-      }
-
-      // Create assistant message
-      assistantMessage = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: assistantMessageContent,
-        createdAt: Date.now(),
-        sessionId,
-        branchId,
-      };
-
-      // Save assistant message to Redis
-      await this.redisMemory?.storeMessage(assistantMessage);
-
-      // Update stream session with the actual message ID if streaming was used
-      if (streamSession) {
-        // Just a placeholder for now
-      }
-
-      return {
-        message: assistantMessageContent,
-        sessionId,
-        messageId: assistantMessage.id,
-        metadata: {
-          tokenUsage: {
-            prompt: 0, // These would be set to actual values in a production environment
-            completion: 0,
-            total: 0
-          },
-          model: this.config.model.modelId,
-          streamProgress: streamSession ? {
-            tokensReceived: streamSession.tokensReceived,
-            duration: streamSession.duration,
-            status: streamSession.status === 'done' ? 'complete' : streamSession.status
-          } : {
-            tokensReceived: 0,
-            duration: 0,
-            status: 'complete'
-          }
+      // Create initial context
+      const context: AgentContext = {
+        message,
+        history,
+        toolResults: {},
+        config: {
+          apiKey: config.openai.apiKey,
+          searchApiKey: config.tavily.apiKey,
+          voiceApiKey: config.deepgram.apiKey
         }
       };
+
+      // Create and execute workflow
+      const workflow = WorkflowFactory.createChatWorkflow(context, this.streaming);
+      
+      logger.info('Starting chat workflow', {
+        message: message.slice(0, 100) // Log first 100 chars
+      });
+
+      const result = await workflow.execute();
+
+      logger.info('Chat workflow completed', {
+        toolsUsed: Object.keys(result.toolResults)
+      });
+
+      return result;
     } catch (error) {
-      logger.error('Error in chat:', error);
-      throw new LLMServiceError(
-        `Failed to generate response: ${error instanceof Error ? error.message : String(error)}`,
-        'GENERATION_FAILED'
-      );
+      logger.error('Chat workflow failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      
+      throw new LLMServiceError('Failed to process chat message', {
+        cause: error as Error
+      });
     }
   }
 
@@ -628,6 +534,10 @@ export class LLMService {
   private async waitForStreamCompletion(streamId: string): Promise<string> {
     // Implementation of waitForStreamCompletion method
     throw new Error('Method not implemented');
+  }
+
+  async stop(): Promise<void> {
+    // Implement if needed
   }
 }
 

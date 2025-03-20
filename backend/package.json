@@ -4,6 +4,7 @@
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:ts": "ts-node src/services/agents/__tests__/workflow.test.ts",
     "test:ws": "ts-node src/services/llm/__tests__/websocket.manual-test.ts",
     "build": "tsc",
     "start": "node dist/index.js",
@@ -21,6 +22,7 @@
   "author": "PRITISH MISHRA",
   "license": "MIT",
   "dependencies": {
+    "@deepgram/sdk": "^2.4.0",
     "@trpc/client": "^10.45.1",
     "@trpc/server": "^10.45.1",
     "@types/compression": "^1.7.5",
@@ -34,6 +36,7 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.6.0",
     "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "socket.io": "^4.8.1",
@@ -47,6 +50,7 @@
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
     "@types/jsonwebtoken": "^9.0.9",
+    "@types/multer": "^1.4.12",
     "@types/node": "^20.11.24",
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",

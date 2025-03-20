@@ -55,12 +55,28 @@ async function getLLMService(modelId: string): Promise<LLMService> {
     return entry.service;
   }
   
-  // Create new instance with vector store support
+  // Create new instance with OpenAI provider
   const service = new LLMService({
     model: {
-      provider: 'ollama',
+      provider: 'openai',
       modelId: cacheKey,
-      baseUrl: config.llm.ollamaEndpoint
+      apiKey: config.llm.apiKey,
+      temperature: config.llm.temperature ?? 0.7,
+      maxTokens: config.llm.maxTokens ?? 2000
+    },
+    tools: {
+      enabled: true,
+      providers: {
+        search: {
+          enabled: true,
+          apiKey: config.search.tavilyApiKey
+        },
+        voice: {
+          enabled: true,
+          sttApiKey: config.voice.sttApiKey,
+          ttsApiKey: config.voice.ttsApiKey
+        }
+      }
     },
     memory: {
       redisUrl: config.redis.url,
@@ -100,7 +116,8 @@ const messageSchema = z.object({
     temperature: z.number().min(0).max(2).optional(),
     max_tokens: z.number().optional(),
     top_p: z.number().min(0).max(1).optional(),
-    stop: z.array(z.string()).optional()
+    stop: z.array(z.string()).optional(),
+    enableTools: z.boolean().optional()
   }).optional()
 });
 

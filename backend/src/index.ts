@@ -5,11 +5,12 @@
  * initializes the server using the modular server architecture.
  */
 
-import { createApp, createServer } from './server/index';
+import { createServer } from './server/index';
 import { startServer } from './server/lifecycle';
-import { config } from './config/index';
+import { config } from './config';
 import logger from './utils/logger';
 import { setupGracefulShutdown } from './server/lifecycle';
+import app from './app';
 
 // Display startup validation warnings
 if (config.server.nodeEnv === 'development') {
@@ -21,16 +22,17 @@ if (config.server.nodeEnv === 'development') {
 
 async function main() {
   try {
-    // Create Express app
-    const app = createApp();
-
     // Create and initialize the HTTP server
     const server = await createServer(app);
     setupGracefulShutdown(server);
 
     // Start the server
-    const port = config.server.port;
-    await startServer(server, port);
+    const port = config.server?.port || 3000;
+    const host = config.server?.host || 'localhost';
+    
+    server.listen(port, () => {
+      logger.info(`Server is running at http://${host}:${port}`);
+    });
   } catch (error) {
     logger.error('Failed to start server:', {
       error: error instanceof Error ? error.message : String(error),

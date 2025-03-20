@@ -1,6 +1,5 @@
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { Document } from '@langchain/core/documents';
-import { Socket } from 'socket.io';
 import { EventEmitter } from 'events';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
@@ -62,7 +61,6 @@ export interface StreamCallbacks {
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onMetadata?: (metadata: Record<string, unknown>) => void;
-  websocket?: Socket;
 }
 
 // Redis memory persistence configuration
@@ -165,7 +163,6 @@ export interface ChatParams {
     onComplete?: () => void;
     onError?: (error: Error) => void;
   };
-  websocket?: Socket;
 }
 
 // Chat response interface
@@ -302,22 +299,22 @@ export interface BranchHistoryEntry {
 
 // Stream chunk
 export interface StreamChunk {
-  type: 'token' | 'error' | 'complete';
+  type: 'token' | 'error' | 'complete' | 'tool_start' | 'tool_end';
   content?: string;
   error?: Error;
-  metadata?: Record<string, unknown>;
+  metadata?: {
+    tool?: string;
+    status?: string;
+    progress?: number;
+  };
 }
 
 // Stream options
 export interface StreamOptions {
-  maxDuration?: number;
-  timeout?: number;
-  retryAttempts?: number;
-  rateLimitPerMinute?: number;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
-  topK?: number;
+  enableTools?: boolean;
 }
 
 // Stream session
@@ -344,18 +341,14 @@ export interface StreamAdapter {
 
 // Chat completion parameters
 export interface ChatCompletionParams {
-  messages: Array<{
-    role: 'system' | 'user' | 'assistant' | 'function' | 'tool';
-    content: string;
-    name?: string;
-  }>;
-  systemPrompt?: string;
+  messages: ChatCompletionMessageParam[];
   model?: string;
+  systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  topP?: number;
   stream?: boolean;
   signal?: AbortSignal;
+  enableTools?: boolean;
 }
 
 // Redis config interface
