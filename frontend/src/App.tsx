@@ -1,9 +1,8 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Provider } from "react-redux";
 import { store } from "./redux/store";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
@@ -11,6 +10,8 @@ import Index from "./pages/Index";
 import Chat from "./pages/Chat";
 import NotFound from "./pages/NotFound";
 import Layout from "./components/layout/Layout";
+import ChatContainer from './components/chat/ChatContainer';
+import { ChatTester } from './components/test/ChatTester';
 
 /**
  * Create MUI theme to match our Tailwind design
@@ -88,6 +89,8 @@ const AppWithProviders = () => (
             <Routes>
               <Route path="/" element={<Layout><Index /></Layout>} />
               <Route path="/chat" element={<Layout><Chat /></Layout>} />
+              <Route path="/chat/:sessionId" element={<Layout><Chat /></Layout>} />
+              <Route path="/test" element={<Layout><ChatTester /></Layout>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

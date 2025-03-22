@@ -1,29 +1,9 @@
 // @ts-nocheck
 import { router, publicProcedure } from '../trpc';
 import { z } from 'zod';
-import { LLMWebSocketManager, chatEventSchema } from '../../services/llm/websocket';
 import { LLMService } from '../../services/llm';
-import { RedisMemory } from '../../services/llm/memory/redis';
 import logger from '../../utils/logger';
-import type { inferAsyncReturnType } from '@trpc/server';
 import { v4 as uuidv4 } from 'uuid';
-import { WebSocket } from 'ws';
-
-// Map to store WebSocket managers by context ID
-const wsManagerMap = new Map<string, LLMWebSocketManager>();
-
-// Function to get or create a WebSocket manager for a context
-function getOrCreateWSManager(contextId: string): LLMWebSocketManager {
-  let wsManager = wsManagerMap.get(contextId);
-  if (!wsManager) {
-    wsManager = new LLMWebSocketManager(
-      global.llmService as LLMService,
-      global.redisManager as RedisMemory
-    );
-    wsManagerMap.set(contextId, wsManager);
-  }
-  return wsManager;
-}
 
 export const llmRouter = router({
   // Get available models
@@ -45,36 +25,6 @@ export const llmRouter = router({
     }))
     .query(async ({ input }) => {
       return global.llmService.getOrCreateSession(input.sessionId || '');
-    }),
-
-  // Subscribe to chat events
-  onChat: publicProcedure
-    .input(chatEventSchema)
-    .subscription(({ input, ctx }) => {
-      // Get WebSocket manager instance for this context
-      const contextId = ctx.wsContext?.connectionId || 'default';
-      const wsManager = getOrCreateWSManager(contextId);
-
-      // Return the subscription
-      return wsManager.createChatSubscription(
-        input.sessionId || uuidv4(),
-        input.content,
-        input.systemPrompt,
-        input.parentMessageId
-      );
-    }),
-
-  // Cancel a stream
-  cancelStream: publicProcedure
-    .input(z.object({
-      streamId: z.string()
-    }))
-    .mutation(async ({ input, ctx }) => {
-      // Get WebSocket manager instance for this context
-      const contextId = ctx.wsContext?.connectionId || 'default';
-      const wsManager = getOrCreateWSManager(contextId);
-      await wsManager.cancelStream(input.streamId);
-      return { success: true };
     }),
 
   // Create a new branch

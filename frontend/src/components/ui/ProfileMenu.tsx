@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useDispatch } from 'react-redux';
 import { setProfileMenuOpen } from '@/redux/features/uiSlice';
@@ -7,6 +6,7 @@ import {
   User, Settings, LogOut, Database, Bot, 
   ChevronRight, PanelLeft
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 const ProfileMenu: React.FC = () => {
   const dispatch = useDispatch();
@@ -68,17 +68,41 @@ const ProfileMenu: React.FC = () => {
             <ChevronRight size={14} className="ml-auto text-muted-foreground" />
           </button>
           
-          <button className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent/10 transition-colors text-left">
-            <Database size={16} className="text-primary" />
-            <span>LLM Settings</span>
-            <ChevronRight size={14} className="ml-auto text-muted-foreground" />
-          </button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button 
+                  className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent/10 transition-colors text-left opacity-50 cursor-not-allowed"
+                  disabled
+                >
+                  <Database size={16} className="text-primary" />
+                  <span>LLM Settings</span>
+                  <ChevronRight size={14} className="ml-auto text-muted-foreground" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Coming Soon</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           
-          <button className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent/10 transition-colors text-left">
-            <Bot size={16} className="text-primary" />
-            <span>Configure Agents</span>
-            <ChevronRight size={14} className="ml-auto text-muted-foreground" />
-          </button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button 
+                  className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent/10 transition-colors text-left opacity-50 cursor-not-allowed"
+                  disabled
+                >
+                  <Bot size={16} className="text-primary" />
+                  <span>Configure Agents</span>
+                  <ChevronRight size={14} className="ml-auto text-muted-foreground" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Coming Soon</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
         
         <div className="border-t my-1"></div>

@@ -7,23 +7,23 @@
  * - displays scroll-to-bottom button when needed
  * - blurs messages during editing
  * - manages branch point navigation
+ * - displays session information and health status
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { RootState } from '@/redux/store';
-import UserMessage from './UserMessage';
-import BotMessage from './BotMessage';
-import MessageInput from './MessageInput';
-import ErrorMessage from './ErrorMessage';
+import { useAppDispatch, useAppSelector } from '@/lib/store/hooks';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Message } from '@/types';
-import webSocketManager from '@/utils/webSocket';
+import { Message } from '@/lib/types/chat';
 import { ChevronDown } from 'lucide-react';
-import { IconButton, Tooltip } from '@mui/material';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { LlamaChat } from './LlamaChat';
+import { ErrorMessage } from './ErrorMessage';
+import { SessionInfo } from './SessionInfo';
+import { toast } from 'sonner';
 
 const ChatContainer: React.FC = () => {
   // initialize redux dispatch
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
 
   // get chat state from redux store
   const {
@@ -31,12 +31,10 @@ const ChatContainer: React.FC = () => {
     currentSessionId,
     isGenerating,
     editingMessageId,
-    activeBranchId,
-    currentBranchIndex
-  } = useSelector((state: RootState) => state.chat);
+    error
+  } = useAppSelector(state => state.chat);
 
   // ref for auto-scrolling to bottom of messages
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   // state to track if we should show the scroll-to-bottom button
@@ -46,25 +44,14 @@ const ChatContainer: React.FC = () => {
 
   // find current chat session and its messages
   const currentSession = sessions.find(session => session.id === currentSessionId);
-  
-  // get either main thread messages or branch messages based on active branch
-  let messages: Message[] = [];
-  
-  if (currentSession) {
-    if (activeBranchId) {
-      // display messages from the active branch
-      const branch = currentSession.branches.find(b => b.id === activeBranchId);
-      if (branch) {
-        messages = branch.messages;
-      } else {
-        // fallback to main thread if branch not found
-        messages = currentSession.messages;
-      }
-    } else {
-      // display main thread messages
-      messages = currentSession.messages;
+  const messages = currentSession?.messages || [];
+
+  // Show error toast if there's an error
+  useEffect(() => {
+    if (error) {
+      toast.error(error);
     }
-  }
+  }, [error]);
 
   /**
    * check if the chat is scrolled to the bottom
@@ -88,7 +75,6 @@ const ChatContainer: React.FC = () => {
       behavior: 'smooth'
     });
     
-    // hide the button after scrolling to bottom
     setShowScrollButton(false);
     setUserHasScrolled(false);
   }, []);
@@ -101,14 +87,11 @@ const ChatContainer: React.FC = () => {
     
     const isBottom = isAtBottom();
     
-    // track if user has scrolled up
     if (!isBottom) {
       setUserHasScrolled(true);
       setShowScrollButton(true);
     } else {
       setShowScrollButton(false);
-      
-      // reset user scroll flag if they scrolled back to bottom
       if (userHasScrolled) {
         setUserHasScrolled(false);
       }
@@ -132,66 +115,23 @@ const ChatContainer: React.FC = () => {
    * auto-scroll effect for new messages
    */
   useEffect(() => {
-    // if user hasn't manually scrolled up or if we're generating, scroll to bottom
     if (!userHasScrolled || isGenerating) {
       scrollToBottom();
     } else if (isGenerating) {
-      // always show scroll button when generating but user has scrolled
       setShowScrollButton(true);
     }
   }, [messages.length, scrollToBottom, userHasScrolled, isGenerating]);
-  
-  /**
-   * effect to handle when generation finishes
-   */
-  useEffect(() => {
-    // when generation stops and user hasn't scrolled, scroll to bottom
-    if (!isGenerating && !userHasScrolled) {
-      scrollToBottom();
-    }
-  }, [isGenerating, scrollToBottom, userHasScrolled]);
-
-  // find the index of the last user message
-  const getLastUserMessageIndex = () => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        return i;
-      }
-    }
-    return -1;
-  };
-
-  const lastUserMessageIndex = getLastUserMessageIndex();
-  
-  // determine which message is being edited
-  const getEditingMessageIndex = () => {
-    if (!editingMessageId) return -1;
-    return messages.findIndex(m => m.id === editingMessageId);
-  };
-  
-  const editingMessageIndex = getEditingMessageIndex();
-  
-  // find if we have a branch point in this message thread
-  const branchPointIndex = currentSession?.messages.findIndex(m => m.branch_point) ?? -1;
-  const hasBranches = branchPointIndex !== -1 && currentSession?.branches.length > 0;
 
   // render empty state when no messages exist
   if (messages.length === 0) {
-    return <div className="flex flex-col h-full">
+    return (
+      <div className="flex flex-col h-full">
         <div className="flex-1 flex items-center justify-center">
           <motion.div 
             className="max-w-lg text-center px-4" 
-            initial={{
-              opacity: 0,
-              y: 20
-            }} 
-            animate={{
-              opacity: 1,
-              y: 0
-            }} 
-            transition={{
-              duration: 0.5
-            }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
           >
             <h2 className="text-2xl font-semibold mb-3">How can I help you today?</h2>
             <p className="text-muted-foreground">
@@ -199,112 +139,93 @@ const ChatContainer: React.FC = () => {
             </p>
           </motion.div>
         </div>
-        <MessageInput />
-      </div>;
+        <LlamaChat />
+      </div>
+    );
   }
 
-  // render chat messages with animations
-  return <div className="flex flex-col h-full">
-      {/* scrollable message container */}
-      <div 
-        ref={containerRef}
-        className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#eef3f3] bg-[414549] relative"
-      >
-        <div className="max-w-4xl mx-auto space-y-6">
-          {/* animate message presence/absence */}
-          <AnimatePresence initial={false}>
-            {/* map through and render each message */}
-            {messages.map((message: Message, index: number) => {
-              const isUser = message.role === 'user';
-              const isLastUserMessage = index === lastUserMessageIndex;
-              const isEditing = message.id === editingMessageId;
-              const isBranchPoint = message.branch_point;
-              
-              // create classes for blur effect when in edit mode
-              // when editing, blur everything except the message being edited
-              const messageClasses = editingMessageId 
-                ? isEditing 
-                  ? 'opacity-100' 
-                  : 'opacity-30 blur-[1px]'
-                : '';
-              
-              return <motion.div 
-                key={message.id} 
-                initial={{
-                  opacity: 0,
-                  y: 20
-                }} 
-                animate={{
-                  opacity: 1,
-                  y: 0
-                }} 
-                exit={{
-                  opacity: 0,
-                  y: -20
-                }} 
-                transition={{
-                  duration: 0.3
-                }} 
-                className={`mb-6 transition-all duration-200 ${messageClasses}`}
-              >
-                  {/* render appropriate message component based on role and error state*/}
-                  {message.is_error ? (
-                    <ErrorMessage message={message} />) : 
-                    isUser ? (
-                    <UserMessage 
-                      message={message} 
-                      isLastUserMessage={isLastUserMessage}
-                      isBranchPoint={isBranchPoint}
-                      hasBranches={message.branch_point && hasBranches}
-                      branchIndex={currentBranchIndex}
-                      totalBranches={currentSession?.branches.filter(b => b.parentMessageId === message.id).length + 1 || 0}
-                    />) : 
-                    <BotMessage 
-                      message={message} 
-                      isLastMessage={index === messages.length - 1} 
-                    />
-                  }
-                </motion.div>;
-            })}
-          </AnimatePresence>
-          {/* invisible element for scroll anchoring */}
-          <div ref={messagesEndRef} />
-        </div>
+  return (
+    <div className="relative flex flex-col h-full">
+      {/* Session information panel */}
+      <div className="mb-4">
+        <SessionInfo />
+      </div>
+      
+      {/* Message container */}
+      <div className="flex-1 relative overflow-hidden">
+        <ScrollArea 
+          ref={containerRef}
+          className="flex-1 overflow-y-auto bg-background relative"
+        >
+          <div className="max-w-4xl mx-auto">
+            <div className="space-y-4 p-4">
+              <AnimatePresence mode="popLayout" initial={false}>
+                {messages.map((message) => (
+                  <motion.div
+                    key={message.id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ 
+                      duration: 0,  // Instant load for existing messages
+                      ease: [0.2, 0, 0.2, 1]
+                    }}
+                  >
+                    {message.is_error ? (
+                      <ErrorMessage 
+                        message={message}
+                        onRetry={() => {
+                          // Retry logic will be implemented in the next phase
+                          toast.info('Retry functionality coming soon');
+                        }}
+                      />
+                    ) : (
+                      <div 
+                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div 
+                          className={`max-w-[80%] rounded-lg p-4 ${
+                            message.role === 'user' 
+                              ? 'bg-primary text-primary-foreground' 
+                              : 'bg-muted'
+                          } ${editingMessageId === message.id ? 'opacity-50' : ''}`}
+                        >
+                          {message.content}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+        </ScrollArea>
         
-        {/* scroll to bottom button */}
+        <LlamaChat />
+        
         <AnimatePresence>
           {showScrollButton && (
-            <motion.div 
-              className="absolute bottom-6 right-6 z-10"
+            <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               transition={{ duration: 0.2 }}
             >
-              <Tooltip title="Scroll to latest message">
-                <IconButton 
-                  onClick={scrollToBottom}
-                  size="large"
-                  className="bg-primary text-primary-foreground shadow-lg hover:bg-primary/90"
-                  sx={{ 
-                    boxShadow: 3,
-                    backgroundColor: 'rgb(59, 130, 246)', // blue-500
-                    color: 'white',
-                    '&:hover': {
-                      backgroundColor: 'rgba(59, 130, 246, 0.9)',
-                    }
-                  }}
-                >
-                  <ChevronDown />
-                </IconButton>
-              </Tooltip>
+              <Button
+                size="icon"
+                variant="secondary"
+                className="fixed bottom-24 right-4 rounded-full shadow-lg"
+                onClick={scrollToBottom}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </Button>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      {/* message input component */}
-      <MessageInput />
-    </div>;
+    </div>
+  );
 };
 
 export default ChatContainer;

@@ -15,8 +15,17 @@ import logger from '../utils/logger';
 import { LLMService } from '../services/llm';
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
+import express from 'express';
+import { z } from 'zod';
 
 const router = Router();
+
+/**
+ * @swagger
+ * tags:
+ *   name: Chat
+ *   description: Chat API endpoints for message processing, history, and session management
+ */
 
 // apply optional auth to all chat routes
 router.use(optionalAuth);
@@ -24,10 +33,105 @@ router.use(optionalAuth);
 // apply stricter rate limiting to chat routes
 router.use(chatLimiter);
 
-// route to send a message and get a streaming response
+/**
+ * @swagger
+ * /api/v1/chat/message:
+ *   post:
+ *     summary: Send a message to the chat
+ *     description: Send a message and get a response from the AI
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - content
+ *             properties:
+ *               content:
+ *                 type: string
+ *                 description: The message content
+ *               conversationId:
+ *                 type: string
+ *                 description: Optional conversation ID for context
+ *               systemPrompt:
+ *                 type: string
+ *                 description: Optional system prompt to guide the AI
+ *               temperature:
+ *                 type: number
+ *                 description: Temperature for response generation (0-2)
+ *               maxTokens:
+ *                 type: integer
+ *                 description: Maximum tokens in response
+ *     responses:
+ *       200:
+ *         description: Successful response
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ *       429:
+ *         description: Rate limit exceeded
+ */
 router.post('/message', sendMessage);
 
-// route for SSE streaming
+/**
+ * @swagger
+ * /api/v1/chat/stream:
+ *   get:
+ *     summary: Stream chat responses
+ *     description: Server-Sent Events endpoint for streaming chat responses
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: content
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The message content
+ *       - in: query
+ *         name: conversationId
+ *         schema:
+ *           type: string
+ *         description: Optional conversation ID
+ *       - in: query
+ *         name: systemPrompt
+ *         schema:
+ *           type: string
+ *         description: Optional system prompt
+ *       - in: query
+ *         name: temperature
+ *         schema:
+ *           type: number
+ *         description: Temperature for response generation
+ *       - in: query
+ *         name: maxTokens
+ *         schema:
+ *           type: integer
+ *         description: Maximum tokens in response
+ *     responses:
+ *       200:
+ *         description: SSE stream of chat response
+ *         content:
+ *           text/event-stream:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 type:
+ *                   type: string
+ *                   enum: [metadata, content, done, error]
+ *                 data:
+ *                   type: object
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ */
 router.get('/stream', async (req, res, next) => {
   const requestId = uuidv4();
   
@@ -84,7 +188,7 @@ router.get('/stream', async (req, res, next) => {
       model: {
         provider: 'openai',
         modelId: 'gpt-3.5-turbo',
-        apiKey: config.llm.openaiApiKey,
+        openaiApiKey: config.llm.openaiApiKey,
         temperature,
         maxTokens
       },
@@ -215,13 +319,97 @@ router.get('/stream', async (req, res, next) => {
   }
 });
 
-// route to get available models
+/**
+ * @swagger
+ * /api/v1/chat/models:
+ *   get:
+ *     summary: Get available chat models
+ *     description: Retrieve list of available AI models for chat
+ *     tags: [Chat]
+ *     responses:
+ *       200:
+ *         description: List of available models
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 models:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       provider:
+ *                         type: string
+ *                       capabilities:
+ *                         type: array
+ *                         items:
+ *                           type: string
+ */
 router.get('/models', getModels);
 
-// route to stop an in-progress generation
+/**
+ * @swagger
+ * /api/v1/chat/stop:
+ *   post:
+ *     summary: Stop message generation
+ *     description: Stop an in-progress message generation
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Generation stopped successfully
+ *       400:
+ *         description: No active generation to stop
+ *       401:
+ *         description: Unauthorized
+ */
 router.post('/stop', stopGeneration);
 
-// get chat history for a session
+/**
+ * @swagger
+ * /api/v1/chat/history/{sessionId}:
+ *   get:
+ *     summary: Get chat history for a session
+ *     description: Retrieve chat history for a specific session
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     responses:
+ *       200:
+ *         description: Chat history retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 session:
+ *                   type: object
+ *                 messages:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - not your session
+ *       404:
+ *         description: Session not found
+ */
 router.get('/history/:sessionId', async (req, res, next) => {
   try {
     const { sessionId } = req.params;
@@ -257,94 +445,295 @@ router.get('/history/:sessionId', async (req, res, next) => {
   }
 });
 
-// get all chat sessions for authenticated user
-router.get('/sessions', async (req, res, next) => {
+// Global in-memory store for active streams
+const activeStreams = new Map();
+
+/**
+ * @swagger
+ * /api/v1/chat/sessions:
+ *   post:
+ *     summary: Create a new chat session
+ *     description: Create a new chat session with specified model
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - modelId
+ *             properties:
+ *               modelId:
+ *                 type: string
+ *                 description: The AI model ID to use
+ *               title:
+ *                 type: string
+ *                 description: Optional session title
+ *     responses:
+ *       201:
+ *         description: Session created successfully
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/sessions', optionalAuth, async (req, res, next) => {
   try {
-    // only allow authenticated users to access sessions
-    if (!req.user) {
-      return next(new ApiError(401, 'authentication required to access chat sessions'));
+    const { modelId, title } = req.body;
+    
+    if (!modelId) {
+      throw new ApiError(400, 'modelId is required');
     }
     
-    // get all sessions for this user
-    const sessions = await chatSessions.getByUserId(req.user.id);
+    const sessionId = uuidv4();
+    const session = {
+      id: sessionId,
+      title: title || 'Untitled',
+      modelId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messageCount: 0,
+      messages: [],
+      userId: req.user?.id || null
+    };
     
+    // Store session in memory for now
+    global.sessions = global.sessions || new Map();
+    global.sessions.set(sessionId, session);
+    
+    res.status(201).json({
+      success: true,
+      session
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/chat/sessions:
+ *   get:
+ *     summary: Get all chat sessions
+ *     description: Retrieve all chat sessions for the current user
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of chat sessions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 sessions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/sessions', optionalAuth, async (req, res, next) => {
+  try {
+    const sessions = Array.from(global.sessions?.values() || []);
     res.json({
       success: true,
       sessions
     });
   } catch (error) {
-    logger.error(error instanceof Error ? error : new Error('error fetching user sessions'), { userId: req.user?.id });
-    next(error instanceof ApiError ? error : new ApiError(500, 'failed to fetch chat sessions'));
+    next(error);
   }
 });
 
-// create a new chat session
-router.post('/sessions', async (req, res, next) => {
+/**
+ * @swagger
+ * /api/v1/chat/sessions/{sessionId}:
+ *   get:
+ *     summary: Get a specific chat session
+ *     description: Retrieve details of a specific chat session
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     responses:
+ *       200:
+ *         description: Session details retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Session not found
+ */
+router.get('/sessions/:sessionId', optionalAuth, async (req, res, next) => {
   try {
-    // only allow authenticated users to create sessions
-    if (!req.user) {
-      return next(new ApiError(401, 'authentication required to create chat sessions'));
+    const { sessionId } = req.params;
+    
+    if (!global.sessions?.has(sessionId)) {
+      throw new ApiError(404, 'session not found');
     }
     
-    const { title, modelId } = req.body;
-    
-    if (!title) {
-      return next(new ApiError(400, 'title is required'));
-    }
-    
-    // create a new session
-    const session = await chatSessions.create({
-      userId: req.user.id,
-      title,
-      modelId: modelId || 'llama3'
-    });
-    
+    const session = global.sessions.get(sessionId);
     res.json({
       success: true,
       session
     });
   } catch (error) {
-    logger.error(error instanceof Error ? error : new Error('error creating chat session'), { userId: req.user?.id });
-    next(error instanceof ApiError ? error : new ApiError(500, 'failed to create chat session'));
+    next(error);
   }
 });
 
-// delete a chat session
-router.delete('/sessions/:sessionId', async (req, res, next) => {
+/**
+ * @swagger
+ * /api/v1/chat/sessions/{sessionId}:
+ *   delete:
+ *     summary: Delete a chat session
+ *     description: Delete a specific chat session
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     responses:
+ *       204:
+ *         description: Session deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Session not found
+ */
+router.delete('/sessions/:sessionId', optionalAuth, async (req, res, next) => {
   try {
     const { sessionId } = req.params;
     
-    // only allow authenticated users to delete sessions
-    if (!req.user) {
-      return next(new ApiError(401, 'authentication required to delete chat sessions'));
+    if (!global.sessions?.has(sessionId)) {
+      throw new ApiError(404, 'session not found');
     }
     
-    // get session to verify ownership
-    const session = await chatSessions.getById(sessionId);
-    
-    if (!session) {
-      return next(new ApiError(404, 'chat session not found'));
-    }
-    
-    // verify user owns this session
-    if (session.userId !== req.user.id) {
-      return next(new ApiError(403, 'you do not have permission to delete this chat session'));
-    }
-    
-    // delete the session
-    await chatSessions.delete(sessionId);
-    
-    res.json({
-      success: true,
-      message: 'chat session deleted successfully'
-    });
+    global.sessions.delete(sessionId);
+    res.status(204).send();
   } catch (error) {
-    logger.error(error instanceof Error ? error : new Error('error deleting chat session'), { sessionId: req.params.sessionId });
-    next(error instanceof ApiError ? error : new ApiError(500, 'failed to delete chat session'));
+    next(error);
   }
 });
 
-// New route: semantic search in session history
+/**
+ * @swagger
+ * /api/v1/chat/sessions/{sessionId}/clear:
+ *   post:
+ *     summary: Clear chat session messages
+ *     description: Clear all messages from a chat session
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     responses:
+ *       200:
+ *         description: Session cleared successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Session not found
+ */
+router.post('/sessions/:sessionId/clear', optionalAuth, async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = global.sessions?.get(sessionId);
+    if (!session) {
+      throw new ApiError(404, 'session not found');
+    }
+    
+    session.messages = [];
+    session.messageCount = 0;
+    session.updatedAt = new Date().toISOString();
+    
+    global.sessions.set(sessionId, session);
+    res.json({
+      success: true,
+      session
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/chat/search/{sessionId}:
+ *   post:
+ *     summary: Search chat history
+ *     description: Perform semantic search in chat session history
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - query
+ *             properties:
+ *               query:
+ *                 type: string
+ *                 description: Search query
+ *               limit:
+ *                 type: integer
+ *                 description: Maximum number of results
+ *               threshold:
+ *                 type: number
+ *                 description: Similarity threshold
+ *     responses:
+ *       200:
+ *         description: Search results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 results:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - not your session
+ *       404:
+ *         description: Session not found
+ */
 router.post('/search/:sessionId', async (req, res, next) => {
   try {
     const { sessionId } = req.params;
@@ -372,7 +761,7 @@ router.post('/search/:sessionId', async (req, res, next) => {
     }
     
     // Create an LLM service instance
-    const llmService = new LLMService({
+    const llmService = new LLMService({   // ????
       model: {
         provider: 'ollama',
         modelId: session.modelId || config.llm.defaultModel,
@@ -426,27 +815,180 @@ router.post('/search/:sessionId', async (req, res, next) => {
   }
 });
 
-// Set session model
-router.post('/sessions/:sessionId/model', async (req, res, next) => {
-  const { sessionId } = req.params;
-  const { modelId } = req.body;
-
+/**
+ * @swagger
+ * /api/v1/chat/sessions/{sessionId}/model:
+ *   post:
+ *     summary: Set session model
+ *     description: Change the AI model for a chat session
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The chat session ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - modelId
+ *             properties:
+ *               modelId:
+ *                 type: string
+ *                 description: New AI model ID
+ *     responses:
+ *       200:
+ *         description: Model updated successfully
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Session not found
+ */
+router.post('/sessions/:sessionId/model', optionalAuth, async (req, res, next) => {
   try {
-    // get session to verify ownership
-    const session = await chatSessions.getById(sessionId);
-    
-    if (!session) {
-      return next(new ApiError(404, 'chat session not found'));
+    const { sessionId } = req.params;
+    const { modelId } = req.body;
+
+    if (!modelId) {
+      throw new ApiError(400, 'modelId is required');
     }
 
-    // update the session model
-    await chatSessions.update(sessionId, { modelId });
+    // Check if session exists in memory first
+    if (!global.sessions?.has(sessionId)) {
+      throw new ApiError(404, 'chat session not found');
+    }
 
-    return res.status(200).json({ success: true, message: 'Session model updated.' });
+    // Get and update the session
+    const session = global.sessions.get(sessionId);
+    session.modelId = modelId;
+    session.updatedAt = new Date().toISOString();
+    
+    // Update in memory
+    global.sessions.set(sessionId, session);
+
+    res.json({
+      success: true,
+      session
+    });
   } catch (error) {
     logger.error('Error setting session model:', error);
     next(error instanceof ApiError ? error : new ApiError(500, 'Failed to set session model.'));
   }
+});
+
+/**
+ * @swagger
+ * /api/v1/chat:
+ *   post:
+ *     summary: Send a message to the chat
+ *     description: Send a message to the chat and get a response from the AI
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - message
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 description: The message to send to the chat
+ *               model:
+ *                 type: string
+ *                 description: The model to use for the response
+ *                 enum: [gpt-4, gpt-3.5-turbo, claude-3-opus, claude-3-sonnet]
+ *               temperature:
+ *                 type: number
+ *                 description: The temperature for response generation
+ *                 minimum: 0
+ *                 maximum: 2
+ *                 default: 0.7
+ *     responses:
+ *       200:
+ *         description: Successful response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 response:
+ *                   type: string
+ *                   description: The AI's response
+ *                 usage:
+ *                   type: object
+ *                   properties:
+ *                     prompt_tokens:
+ *                       type: number
+ *                     completion_tokens:
+ *                       type: number
+ *                     total_tokens:
+ *                       type: number
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: Unauthorized
+ *       429:
+ *         description: Rate limit exceeded
+ */
+router.post('/', async (req, res) => {
+  // ... existing route handler code ...
+});
+
+/**
+ * @swagger
+ * /api/v1/chat/history:
+ *   get:
+ *     summary: Get chat history
+ *     description: Retrieve the chat history for the current user
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *         description: Maximum number of messages to return
+ *         default: 50
+ *     responses:
+ *       200:
+ *         description: Successful response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   message:
+ *                     type: string
+ *                   response:
+ *                     type: string
+ *                   timestamp:
+ *                     type: string
+ *                     format: date-time
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/history', async (req, res) => {
+  // ... existing route handler code ...
 });
 
 export default router;

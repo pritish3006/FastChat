@@ -1,21 +1,46 @@
+/**
+ * Index page - Landing/home page of the application
+ * 
+ * Features:
+ * - Welcome message and quick start button
+ * - Feature highlights with animations
+ * - Responsive design
+ * - Modern UI with shadcn components
+ */
 
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
-import { createNewSession } from '@/redux/features/chatSlice';
+import { useAppDispatch } from '@/lib/store/hooks';
+import { createSession } from '@/lib/store/slices/chatSlice';
 import { motion } from 'framer-motion';
-import { MessageSquare } from 'lucide-react';
-import { Button } from '@mui/material';
+import { 
+  MessageSquare, 
+  Sparkles,
+  Bot,
+  Search,
+  Code,
+  Upload,
+  ArrowRight
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 const Index = () => {
   const navigate = useNavigate();
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
 
-  const handleStartChat = () => {
-    dispatch(createNewSession());
-    navigate('/chat');
+  const handleStartChat = async () => {
+    try {
+      // Create a new session with default model
+      await dispatch(createSession({ modelId: 'gpt-3.5-turbo' })).unwrap();
+      navigate('/chat');
+      toast.success('Chat session created');
+    } catch (error) {
+      toast.error('Failed to create chat session');
+    }
   };
 
+  // Animation variants
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -36,68 +61,102 @@ const Index = () => {
     }
   };
 
+  // Feature cards data
+  const features = [
+    {
+      icon: <Bot className="h-6 w-6 text-primary" />,
+      title: "Multiple AI Models",
+      description: "Choose from various AI models optimized for different tasks and requirements"
+    },
+    {
+      icon: <Search className="h-6 w-6 text-primary" />,
+      title: "Web Search",
+      description: "Access real-time information from the web to enhance responses"
+    },
+    {
+      icon: <Code className="h-6 w-6 text-primary" />,
+      title: "Code Interpreter",
+      description: "Execute and analyze code in multiple programming languages"
+    },
+    {
+      icon: <Upload className="h-6 w-6 text-primary" />,
+      title: "File Processing",
+      description: "Upload and process various file types for analysis and interaction"
+    }
+  ];
+
   return (
     <motion.div
-      className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] px-4 py-12"
+      className="min-h-[calc(100vh-4rem)] bg-background flex flex-col items-center justify-center p-4 md:p-8"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
     >
-      <motion.div variants={itemVariants} className="text-center max-w-3xl">
-        <div className="bg-primary/10 p-3 rounded-full inline-flex mb-6">
-          <MessageSquare size={32} className="text-primary" />
-        </div>
-        
+      <motion.div 
+        className="text-center max-w-4xl mx-auto"
+        variants={itemVariants}
+      >
+        {/* Hero section */}
+        <motion.div 
+          className="inline-flex items-center justify-center p-2 rounded-full bg-primary/10 mb-8"
+          variants={itemVariants}
+        >
+          <Sparkles className="w-6 h-6 text-primary mr-2" />
+          <span className="text-sm font-medium text-primary">
+            Powered by Advanced AI
+          </span>
+        </motion.div>
+
         <motion.h1 
-          className="text-4xl md:text-5xl font-bold mb-4"
+          className="text-4xl md:text-6xl font-bold tracking-tight mb-4"
           variants={itemVariants}
         >
-          Welcome to your AI Assistant
+          Your AI Assistant for
+          <span className="text-primary"> Everything</span>
         </motion.h1>
-        
+
         <motion.p 
-          className="text-xl text-muted-foreground mb-8"
+          className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto"
           variants={itemVariants}
         >
-          Interact with state-of-the-art AI models through a seamless, real-time interface
+          Experience seamless interaction with state-of-the-art AI models through our
+          intuitive interface. Get instant help with writing, analysis, coding, and more.
         </motion.p>
-        
-        <motion.div variants={itemVariants}>
+
+        <motion.div 
+          className="flex items-center justify-center gap-4 mb-16"
+          variants={itemVariants}
+        >
           <Button
-            variant="contained"
-            size="large"
+            size="lg"
             onClick={handleStartChat}
-            className="bg-primary hover:bg-primary/90 text-white px-8 py-3 rounded-lg"
-            startIcon={<MessageSquare />}
+            className="group"
           >
             Start Chatting
+            <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
           </Button>
         </motion.div>
-        
+
+        {/* Features grid */}
         <motion.div 
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16"
+          className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left"
           variants={itemVariants}
         >
-          <div className="p-6 rounded-lg border bg-card/50 backdrop-blur-sm">
-            <h3 className="text-lg font-semibold mb-2">Personalized Experience</h3>
-            <p className="text-muted-foreground">
-              Access your conversation history and continue where you left off
-            </p>
-          </div>
-          
-          <div className="p-6 rounded-lg border bg-card/50 backdrop-blur-sm">
-            <h3 className="text-lg font-semibold mb-2">Multiple Models</h3>
-            <p className="text-muted-foreground">
-              Choose from a variety of AI models to suit your specific needs
-            </p>
-          </div>
-          
-          <div className="p-6 rounded-lg border bg-card/50 backdrop-blur-sm">
-            <h3 className="text-lg font-semibold mb-2">Tools & Agents</h3>
-            <p className="text-muted-foreground">
-              Enhance capabilities with file upload, web search, code interpretation and more
-            </p>
-          </div>
+          {features.map((feature, index) => (
+            <motion.div
+              key={feature.title}
+              className="p-6 rounded-xl border bg-card hover:bg-accent/50 transition-colors"
+              variants={itemVariants}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                {feature.icon}
+              </div>
+              <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
+              <p className="text-muted-foreground">{feature.description}</p>
+            </motion.div>
+          ))}
         </motion.div>
       </motion.div>
     </motion.div>

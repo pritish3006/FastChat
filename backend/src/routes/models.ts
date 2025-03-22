@@ -11,6 +11,13 @@ import logger from '../utils/logger';
 import { config } from '../config';
 import { BaseModelProperties } from '../services/llm/types';
 
+/**
+ * @swagger
+ * tags:
+ *   name: Models
+ *   description: API endpoints for retrieving information about available AI models
+ */
+
 const router = Router();
 
 // apply optional auth to all models routes
@@ -59,7 +66,48 @@ const AVAILABLE_MODELS = [
   }
 ];
 
-// get all available models
+/**
+ * @swagger
+ * /api/v1/models:
+ *   get:
+ *     summary: Get all available AI models
+ *     description: Retrieve a list of all available AI models with their capabilities
+ *     tags: [Models]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of available models
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 models:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         description: Unique identifier for the model
+ *                       name:
+ *                         type: string
+ *                         description: Human-readable name
+ *                       provider:
+ *                         type: string
+ *                         description: Service provider (e.g., openai, anthropic)
+ *                       description:
+ *                         type: string
+ *                         description: Detailed description of the model
+ *                       parameters:
+ *                         type: object
+ *                         description: Technical parameters and capabilities
+ *       500:
+ *         description: Server error
+ */
 router.get('/', async (req, res, next) => {
   try {
     logger.info('Received request for models list');
@@ -80,7 +128,58 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// get info about a specific model
+/**
+ * @swagger
+ * /api/v1/models/{provider}/{modelId}:
+ *   get:
+ *     summary: Get details for a specific model
+ *     description: Retrieve detailed information about a specific AI model
+ *     tags: [Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: provider
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The model provider (e.g., openai, anthropic)
+ *       - in: path
+ *         name: modelId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The model identifier
+ *     responses:
+ *       200:
+ *         description: Model details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 model:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     name:
+ *                       type: string
+ *                     provider:
+ *                       type: string
+ *                     description:
+ *                       type: string
+ *                     parameters:
+ *                       type: object
+ *       400:
+ *         description: Invalid request format
+ *       404:
+ *         description: Model not found
+ *       500:
+ *         description: Server error
+ */
 router.get('/:provider/:modelId', async (req, res, next) => {
   try {
     const { provider, modelId } = req.params;

@@ -9,6 +9,15 @@ export interface AgentConfig {
   maxTokens?: number;
 }
 
+export interface VoiceOptions {
+  voice?: string;
+  model?: string;
+  sttModel?: string;
+  speed?: number;
+  pitch?: number;
+  language?: string;
+}
+
 export interface AgentContext {
   message: string;
   history: ChatCompletionMessageParam[];
@@ -21,6 +30,10 @@ export interface AgentContext {
     needsSearch?: boolean;
     needsSummary?: boolean;
     summaryMode?: 'search' | 'chat' | 'voice';
+    needsVoice?: boolean;
+    voiceText?: string;
+    voiceOptions?: VoiceOptions;
+    workflowType?: 'chat' | 'voice' | 'search';
   };
   currentQuery?: string;  // Current query being processed
   audioInput?: Buffer;  // Optional audio input for speech-to-text operations
@@ -37,6 +50,13 @@ export interface AgentContext {
     voice?: {
       audio?: string;
       text?: string;
+      confidence?: number;
+      words?: any[];
+    };
+    speech?: {
+      audio: string;
+      format: string;
+      text: string;
     };
     response?: string;
   };
@@ -44,6 +64,8 @@ export interface AgentContext {
 
 export interface AgentStep {
   agent: string;
+  model?: string;
+  temperature?: number;
   input: string;
   output: any;
   timestamp: number;

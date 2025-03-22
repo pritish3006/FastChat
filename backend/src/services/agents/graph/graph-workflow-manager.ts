@@ -1,3 +1,10 @@
+/**
+ * Graph Workflow Manager
+ * 
+ * This module manages the execution of complex workflows using a directed graph of nodes and edges.
+ * It provides methods to add nodes, edges, and execute the workflow from a starting node.
+ * 
+ */
 import { EventEmitter } from 'events';
 import {
   AgentContext,

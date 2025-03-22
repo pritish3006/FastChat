@@ -1,72 +1,141 @@
-import { Graph, AgentContext } from '../base/types';
-import { SearchAgent } from '../search-agent';
-import { ResponseAgent } from '../response-agent';
-import { SummaryAgent } from '../summary-agent';
-import { WorkflowManager } from './workflow-manager';
+import { AgentContext } from '../base/types';
+import { WorkflowEvents } from './workflow-manager';
+import { WorkflowGraphBuilder } from './workflow-graph-builder';
 import { config } from '../../../config';
-
-// Event types for workflow
-interface WorkflowEvents {
-  onToken?: (token: string) => void;
-  onToolStart?: (tool: string) => void;
-  onToolEnd?: (tool: string, result: any) => void;
-  onComplete?: (result: any) => void;
-}
+import logger from '../../../utils/logger';
 
 export class WorkflowFactory {
-  static createChatWorkflow(initialContext: AgentContext, events?: WorkflowEvents): WorkflowManager {
-    const nodes = [];
-    const edges = [];
-
-    // Initialize agents that might be needed
-    const searchAgent = new SearchAgent({
-      config: {
-        name: 'search_agent',
-        description: 'Performs internet searches for current information',
-        model: config.llm.defaultModel
-      }
+  /**
+   * Creates a standard chat workflow using the builder pattern
+   * @param initialContext - The initial context for the workflow
+   * @param events - Optional events for the workflow
+   * @returns A WorkflowManager instance for the chat workflow
+   */
+  static createChatWorkflow(initialContext: AgentContext, events?: WorkflowEvents) {
+    logger.info('Creating chat workflow with builder pattern');
+    
+    const builder = new WorkflowGraphBuilder({
+      defaultModel: config.llm.defaultModel
     });
-
-    const summaryAgent = new SummaryAgent({
-      config: {
-        name: 'summary_agent',
-        description: 'Summarizes content based on mode (search/chat/voice)',
-        model: config.llm.defaultModel,
-        temperature: 0.3
-      }
+    
+    // Always add query and response agents
+    builder.withQueryAgent();
+    builder.withResponseAgent();
+    
+    // Add agents conditionally based on analysis or flags
+    // We add these regardless of conditions - they'll only execute if needed
+    builder.withSearchAgent(ctx => Boolean(ctx.toolResults.queryAnalysis?.needsSearch));
+    builder.withVoiceAgent(ctx => Boolean(ctx.toolResults.queryAnalysis?.needsVoice));
+    
+    // Add summary agent with mode-specific condition
+    builder.withSummaryAgent(ctx => Boolean(ctx.flags?.needsSummary));
+    
+    // Connect query to all other agents - they'll only execute if conditions are met
+    builder.connect('query', 'search');
+    builder.connect('query', 'voice');
+    builder.connect('query', 'summary');
+    builder.connect('query', 'response');
+    
+    // Connect search to summary for search-based summaries
+    builder.connect('search', 'summary', ctx => 
+      Boolean(ctx.flags?.needsSummary && ctx.flags?.summaryMode === 'search'));
+    
+    // Connect all agents to response
+    builder.connect('search', 'response');
+    builder.connect('voice', 'response');
+    builder.connect('summary', 'response');
+    
+    // Build and return workflow
+    return builder.build(initialContext, events);
+  }
+  
+  /**
+   * Creates a voice-focused workflow
+   * @param initialContext - The initial context for the workflow
+   * @param events - Optional events for the workflow
+   * @returns A WorkflowManager instance for the voice workflow
+   */
+  static createVoiceWorkflow(initialContext: AgentContext, events?: WorkflowEvents) {
+    logger.info('Creating voice workflow with STT and TTS capabilities');
+    
+    const builder = new WorkflowGraphBuilder({
+      defaultModel: config.llm.defaultModel
     });
-
-    const responseAgent = new ResponseAgent({
-      config: {
-        name: 'response_agent',
-        description: 'Generates final responses using available information',
-        model: config.llm.defaultModel,
-        temperature: 0.7
-      }
-    });
-
-    // Add nodes based on flags
-    if (initialContext.flags?.needsSearch) {
-      nodes.push({ id: 'search', agent: searchAgent });
-      if (initialContext.flags?.needsSummary && initialContext.flags?.summaryMode === 'search') {
-        nodes.push({ id: 'summary', agent: summaryAgent });
-        edges.push({ from: 'search', to: 'summary' });
-        edges.push({ from: 'summary', to: 'response' });
-      } else {
-        edges.push({ from: 'search', to: 'response' });
-      }
-    } else if (initialContext.flags?.needsSummary) {
-      nodes.push({ id: 'summary', agent: summaryAgent });
-      edges.push({ from: 'summary', to: 'response' });
+    
+    // Add voice agent for STT (if we have audio input or simulated voice)
+    const hasAudioInput = !!initialContext.audioInput;
+    const hasVoiceText = initialContext.flags?.voiceText !== undefined;
+    
+    if (hasAudioInput || hasVoiceText) {
+      logger.debug('Adding voice agent for STT processing');
+      builder.withVoiceAgent();
     }
-
-    // Response agent is always needed
-    nodes.push({ id: 'response', agent: responseAgent });
-
-    // Define workflow graph
-    const graph: Graph = { nodes, edges };
-
-    // Create and return workflow manager
-    return new WorkflowManager(graph, initialContext, events);
+    
+    // Add query agent for understanding the request
+    builder.withQueryAgent();
+    
+    // Add search agent conditionally
+    builder.withSearchAgent(ctx => Boolean(
+      ctx.toolResults.queryAnalysis?.needsSearch || 
+      ctx.flags.needsSearch
+    ));
+    
+    // Add speech agent for TTS output
+    builder.withSpeechAgent();
+    
+    // Add response agent
+    builder.withResponseAgent();
+    
+    // Connect the workflow
+    if (hasAudioInput || hasVoiceText) {
+      // If we have audio input or voiceText, start with voice agent
+      builder.connect('voice', 'query');
+    }
+    
+    // Connect query to search if needed
+    builder.connect('query', 'search', ctx => Boolean(
+      ctx.toolResults.queryAnalysis?.needsSearch || 
+      ctx.flags.needsSearch
+    ));
+    
+    // Connect search to response
+    builder.connect('search', 'response');
+    
+    // Connect query directly to response as well
+    builder.connect('query', 'response');
+    
+    // Response generates text that speech agent converts to audio
+    builder.connect('response', 'speech');
+    
+    logger.debug('Voice workflow graph built with STT and TTS capabilities');
+    
+    // Build and return workflow
+    return builder.build(initialContext, events);
+  }
+  
+  /**
+   * Creates a search-focused workflow
+   * @param initialContext - The initial context for the workflow
+   * @param events - Optional events for the workflow
+   * @returns A WorkflowManager instance for the search workflow
+   */
+  static createSearchWorkflow(initialContext: AgentContext, events?: WorkflowEvents) {
+    logger.info('Creating search workflow with builder pattern');
+    
+    const builder = new WorkflowGraphBuilder({
+      defaultModel: config.llm.defaultModel
+    });
+    
+    return builder
+      .withQueryAgent()
+      .withSearchAgent()
+      .withSummaryAgent(ctx => Boolean(ctx.flags?.needsSummary))
+      .withResponseAgent()
+      .connect('query', 'search')
+      .connect('search', 'summary', ctx => Boolean(ctx.flags?.needsSummary))
+      .connect('search', 'response')
+      .connect('summary', 'response')
+      .connect('query', 'response')
+      .build(initialContext, events);
   }
 } 

@@ -1,3 +1,10 @@
+/**
+ * Base Agent
+ * 
+ * This module provides a base class for all agents.
+ * It includes methods for streaming responses, handling tool calls, and adding steps to the agent's history.
+ */
+
 import { OpenAI } from 'openai';
 import { config } from '../../../config';
 import logger from '../../../utils/logger';
