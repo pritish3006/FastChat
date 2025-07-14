@@ -1,102 +1,117 @@
 import React from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { RootState } from '@/redux/store';
-import { createNewSession, setCurrentSession, deleteSession } from '@/redux/features/chatSlice';
-import { motion } from 'framer-motion';
-import { PlusCircle, MessageCircle, Settings, Trash2 } from 'lucide-react';
+import { useAppDispatch, useAppSelector } from '@/lib/store/hooks';
+import { createSession, setCurrentSession } from '@/lib/store/slices/chatSlice';
+import { motion, AnimatePresence } from 'framer-motion';
+import { PlusCircle, MessageCircle, Trash2, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
-import { IconButton, Tooltip } from '@mui/material';
+import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
+
 const Sidebar: React.FC = () => {
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const {
     sessions,
-    currentSessionId
-  } = useSelector((state: RootState) => state.chat);
-  const handleNewChat = () => {
-    dispatch(createNewSession());
+    currentSessionId,
+    currentModel
+  } = useAppSelector(state => state.chat);
+
+  const handleNewChat = async () => {
+    try {
+      // Create new session with current model (will use default from state)
+      const result = await dispatch(createSession({ 
+        // No need to explicitly pass modelId as our updated thunk will use the current model
+        title: 'New Chat' 
+      })).unwrap();
+      
+      if (!result || !result.id) {
+        throw new Error('Failed to create new session');
+      }
+
+      // Navigate to /chat first, let the Chat component handle the session
+      navigate('/chat');
+      toast.success('Started new chat session');
+    } catch (error) {
+      console.error('Failed to create new chat:', error);
+      toast.error('Failed to create new chat session');
+    }
   };
+
   const handleSelectSession = (sessionId: string) => {
-    dispatch(setCurrentSession(sessionId));
+    navigate(`/chat/${sessionId}`);
   };
-  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
+
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    dispatch(deleteSession(sessionId));
+    // Delete session implementation here
   };
 
-  // Sort sessions by updated_at (newest first)
-  const sortedSessions = [...sessions].sort((a, b) => b.updated_at - a.updated_at);
-  const sidebarVariants = {
-    hidden: {
-      opacity: 0
-    },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.05,
-        delayChildren: 0.1
-      }
+  const formatDate = (dateString: string) => {
+    try {
+      return format(new Date(dateString), 'MMM d, yyyy');
+    } catch {
+      return 'Unknown date';
     }
   };
-  const itemVariants = {
-    hidden: {
-      opacity: 0,
-      x: -20
-    },
-    visible: {
-      opacity: 1,
-      x: 0,
-      transition: {
-        duration: 0.3
-      }
-    }
-  };
-  return <div className="h-full w-[260px] border-r flex flex-col bg-sidebar text-sidebar-foreground">
+
+  return (
+    <div className="h-full w-[260px] border-r flex flex-col bg-background">
       <div className="p-4">
-        <motion.button onClick={handleNewChat} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border bg-sidebar-accent hover:bg-sidebar-accent/80 text-sidebar-accent-foreground transition-colors focus:outline-none focus:ring-2 focus:ring-sidebar-ring" whileHover={{
-        scale: 1.02
-      }} whileTap={{
-        scale: 0.98
-      }}>
-          <PlusCircle size={18} />
-          <span className="text-sm font-medium">New Chat</span>
-        </motion.button>
+        <Button
+          onClick={handleNewChat}
+          className="w-full flex items-center justify-center gap-2"
+          variant="outline"
+        >
+          <PlusCircle className="h-5 w-5" />
+          <span>New Chat</span>
+        </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 bg-zinc-50">
-        <motion.div className="space-y-1" variants={sidebarVariants} initial="hidden" animate="visible">
-          {sortedSessions.length === 0 ? <div className="px-3 py-6 text-center text-muted-foreground text-sm">
-              No chats yet. Start a new conversation!
-            </div> : sortedSessions.map(session => <motion.div key={session.id} onClick={() => handleSelectSession(session.id)} className={`flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer group transition-colors ${currentSessionId === session.id ? 'bg-sidebar-accent/80 text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent/50'}`} variants={itemVariants} whileHover={{
-          x: 4
-        }}>
-                <div className="flex items-center space-x-3 overflow-hidden">
-                  <MessageCircle size={16} className="shrink-0 opacity-70" />
-                  <div className="truncate">
-                    <span className="font-medium">{session.title}</span>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {format(new Date(session.updated_at), 'MMM d, yyyy')}
-                    </div>
+      <ScrollArea className="flex-1">
+        <div className="p-2 space-y-2">
+          <AnimatePresence mode="popLayout">
+            {sessions.map((session) => (
+              <motion.div
+                key={session.id}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className={`
+                  group flex items-center gap-2 p-2 rounded-lg cursor-pointer
+                  ${currentSessionId === session.id ? 'bg-accent' : 'hover:bg-accent/50'}
+                  transition-colors
+                `}
+                onClick={() => handleSelectSession(session.id)}
+              >
+                <MessageCircle className="h-4 w-4 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium truncate">
+                      {session.title || 'New Chat'}
+                    </p>
+                    <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {formatDate(session.createdAt)}
+                  </p>
                 </div>
-                <Tooltip title="Delete chat">
-                  <IconButton size="small" onClick={e => handleDeleteSession(e, session.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
-                    <Trash2 size={16} />
-                  </IconButton>
-                </Tooltip>
-              </motion.div>)}
-        </motion.div>
-      </div>
-
-      <div className="border-t p-4">
-        <motion.button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg hover:bg-sidebar-accent/70 transition-colors text-sm font-medium" whileHover={{
-        scale: 1.02
-      }} whileTap={{
-        scale: 0.98
-      }}>
-          <Settings size={16} />
-          <span>Chat Settings</span>
-        </motion.button>
-      </div>
-    </div>;
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => handleDeleteSession(e, session.id)}
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                </Button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </ScrollArea>
+    </div>
+  );
 };
+
 export default Sidebar;

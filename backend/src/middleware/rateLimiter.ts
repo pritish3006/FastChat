@@ -9,9 +9,9 @@ import rateLimit from 'express-rate-limit';
 import { config } from '../config/index';
 import { ApiError } from './errorHandler';
 
-// default rate limit settings
-const DEFAULT_WINDOW_MS = config.rateLimit?.windowMs || 60000; // default: 60000 ms (1 minute)
-const DEFAULT_MAX_REQUESTS = config.rateLimit?.max || 60; // default: 60 requests per minute
+// Get rate limit settings from environment variables or use defaults
+const DEFAULT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10); // default: 60000 ms (1 minute)
+const DEFAULT_MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '60', 10); // default: 60 requests per minute
 
 /**
  * creates a rate limiter with specific settings

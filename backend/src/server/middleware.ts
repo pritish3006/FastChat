@@ -14,6 +14,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { requestLogger } from '../utils/logger';
 import { config } from '../config/index';
 import { defaultLimiter } from '../middleware/rateLimiter';
+import swaggerUi from 'swagger-ui-express';
+import * as swaggerSetup from '../config/swagger';
+import logger from '../utils/logger';
 
 /**
  * applies essential security and request processing middleware
@@ -88,6 +91,43 @@ export function applyRateLimitingMiddleware(app: Application): void {
 }
 
 /**
+ * applies Swagger documentation middleware
+ */
+export function applySwaggerMiddleware(app: Application): void {
+  try {
+    logger.info('Setting up Swagger documentation...');
+    
+    // Use the exported swaggerSpec directly
+    const { swaggerSpec } = swaggerSetup;
+    
+    // Serve Swagger UI
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+      explorer: true,
+      customCss: '.swagger-ui .topbar { display: none }',
+      swaggerOptions: {
+        docExpansion: 'none',
+        filter: true,
+        showRequestDuration: true,
+      }
+    }));
+    
+    // Serve Swagger JSON
+    app.get('/api-docs.json', (req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.send(swaggerSpec);
+    });
+    
+    logger.info('Swagger documentation setup complete');
+  } catch (error) {
+    logger.error('Failed to set up Swagger documentation:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : 'No stack trace available'
+    });
+    throw error;
+  }
+}
+
+/**
  * applies all middleware at once
  */
 export function applyAllMiddleware(app: Application): void {
@@ -96,4 +136,5 @@ export function applyAllMiddleware(app: Application): void {
   applyLoggingMiddleware(app);
   applyBodyParserMiddleware(app);
   applyRateLimitingMiddleware(app);
+  applySwaggerMiddleware(app);
 } 

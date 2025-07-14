@@ -38,6 +38,55 @@ backend/
 - Node.js (v18 or newer)
 - npm or yarn
 - Ollama installed and running locally
+- Supabase CLI installed (`npm install -g supabase`)
+
+### Database Migrations
+
+The project uses Supabase CLI for database migrations. Here's how to work with migrations:
+
+1. **Link to Your Supabase Project**
+
+```bash
+supabase link --project-ref your_project_ref
+```
+
+2. **View Migration Status**
+
+```bash
+supabase migration list
+```
+
+3. **Create a New Migration**
+
+```bash
+supabase migration new your_migration_name
+```
+
+This creates a new timestamped SQL file in `supabase/migrations/`.
+
+4. **Apply Migrations**
+
+```bash
+supabase db push
+```
+
+5. **Reset Database (Development Only)**
+
+```bash
+supabase db reset
+```
+
+This resets the database and reapplies all migrations.
+
+6. **Pull Remote Changes**
+
+```bash
+supabase db pull
+```
+
+This syncs your local schema with the remote database.
+
+**Note**: Always test migrations locally before applying them to production.
 
 ### Local Development
 

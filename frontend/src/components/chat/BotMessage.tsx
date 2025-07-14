@@ -14,17 +14,23 @@
  */
 
 import React, { useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { RootState } from '@/redux/store';
-import { setIsGenerating } from '@/redux/features/chatSlice';
-import { Message } from '@/types';
+import { useAppDispatch, useAppSelector } from '@/lib/store/hooks';
+import { Message, MessageMetadata, SearchResult } from '@/lib/types/chat';
 import { motion } from 'framer-motion';
-import { Copy, RotateCcw, Check } from 'lucide-react';
-import { IconButton, Avatar, Tooltip, Snackbar } from '@mui/material';
-import webSocketManager from '@/utils/webSocket';
+import { Copy, RotateCcw, Check, Search as SearchIcon } from 'lucide-react';
+import { Avatar } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import { chatService } from '@/lib/services/chat.service';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
-// format timestamp to HH:MM format (24-hour)
-const formatTimestamp = (timestamp: number): string => {
+// Format timestamp to HH:MM format (24-hour)
+const formatTimestamp = (timestamp: string): string => {
   const date = new Date(timestamp);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
@@ -38,23 +44,28 @@ const BotMessage: React.FC<BotMessageProps> = ({
   message,
   isLastMessage
 }) => {
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
   const [copySuccess, setCopySuccess] = useState(false);
-  const isGenerating = useSelector((state: RootState) => state.chat.isGenerating);
-  const { sessions, currentSessionId } = useSelector((state: RootState) => state.chat);
-  const editingMessageId = useSelector((state: RootState) => state.chat.editingMessageId);
+  const isGenerating = useAppSelector((state) => state.chat.isGenerating);
+  const { sessions, currentSessionId } = useAppSelector((state) => state.chat);
+  const currentModel = useAppSelector((state) => state.chat.currentModel);
+  const isGPT4Mini = currentModel === 'gpt-4o-mini';
+  const editingMessageId = useAppSelector((state) => state.chat.editingMessageId);
   
-  // only show cursor when the message is actively streaming
-  const showCursorBlink = isLastMessage && message.is_streaming;
+  // Show streaming indicator for last message
+  const showStreamingIndicator = message.is_streaming && isLastMessage;
 
-  // remove timestamp prefix if present in content
+  // Handle metadata from agent responses
+  const metadata = message.metadata as MessageMetadata;
+  const hasAgentResults = metadata && (metadata.search?.length || metadata.steps?.length);
+
+  // Remove timestamp prefix if present in content
   let displayContent = message.content;
-  // check for timestamp pattern [hh:mm:ss] at the beginning
   if (displayContent.match(/^\[\d{2}:\d{2}(:\d{2})?\]/)) {
     displayContent = displayContent.replace(/^\[\d{2}:\d{2}(:\d{2})?\]\s*/, '');
   }
 
-  // subtle pulse animation while message is streaming
+  // Subtle pulse animation while message is streaming
   const pulseAnimation = message.is_streaming ? {
     boxShadow: [
       '0 0 0 0 rgba(59, 130, 246, 0)',
@@ -63,153 +74,189 @@ const BotMessage: React.FC<BotMessageProps> = ({
     ]
   } : {};
 
-  // copy message content to clipboard
+  // Copy message content to clipboard
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content)
       .then(() => {
         setCopySuccess(true);
+        toast.success('Copied to clipboard');
         setTimeout(() => setCopySuccess(false), 2000);
       });
   };
   
-  // regenerate the last message response in-place
-  const handleRegenerate = () => {
+  // Regenerate the last message response in-place
+  const handleRegenerate = async () => {
     if (isGenerating) {
-      console.log("cannot regenerate while already generating");
+      toast.error("Cannot regenerate while already generating");
       return;
     }
     
     console.log("=== starting regeneration ===");
-    console.log("message to regenerate:", message);
     
-    // find the latest user message to regenerate from
+    // Find the current session
     const currentSession = sessions.find(session => session.id === currentSessionId);
     if (!currentSession) {
-      console.error("cannot find current session");
+      toast.error("Cannot find current session");
       return;
     }
     
-    // get all messages in the session
+    // Get all messages in the session
     const allMessages = currentSession.messages;
-    console.log("all messages in session:", allMessages.map(m => ({ id: m.id, role: m.role })));
     
-    // find this message's index in the session
+    // Find this message's index in the session
     const currentMessageIndex = allMessages.findIndex(m => m.id === message.id);
     if (currentMessageIndex === -1) {
-      console.error("cannot find current message in session, id:", message.id);
+      toast.error("Cannot find current message in session");
       return;
     }
     
-    console.log(`found bot message at index ${currentMessageIndex} of ${allMessages.length}`);
-    
-    // find the last user message before this message
-    let lastUserMessage = '';
-    let lastUserMessageId = '';
+    // Find the last user message before this message
+    let lastUserMessage = null;
     
     for (let i = currentMessageIndex - 1; i >= 0; i--) {
       if (allMessages[i].role === 'user') {
-        lastUserMessage = allMessages[i].content;
-        lastUserMessageId = allMessages[i].id;
-        console.log(`found user message at index ${i}: ${lastUserMessageId}`);
+        lastUserMessage = allMessages[i];
         break;
       }
     }
     
     if (!lastUserMessage) {
-      console.error("no user message found before this bot message");
+      toast.error("No user message found to regenerate from");
       return;
     }
     
-    console.log(`will regenerate bot message ${message.id} in response to user message: "${lastUserMessage.substring(0, 30)}..."`);
-    
     try {
-      // pass the current message id to replace in-place
-      webSocketManager.regenerateResponse(
-        lastUserMessage,
-        currentSession.model_id,
-        message.id
-      );
-      console.log("regeneration request sent successfully");
+      await chatService.regenerateMessage(message.id);
+      toast.success("Regenerating response...");
     } catch (error) {
-      console.error("failed to start regeneration:", error);
+      toast.error("Failed to regenerate response");
+      console.error("Failed to start regeneration:", error);
     }
   };
 
-  return <div className="flex items-start gap-3 max-w-4xl">
-      <Avatar sx={{
-      width: 36,
-      height: 36
-    }} className="bg-primary text-primary-foreground">
-        AI
+  return (
+    <div className="flex items-start gap-3 max-w-4xl">
+      <Avatar className="h-9 w-9 bg-primary text-primary-foreground">
+        <span>AI</span>
       </Avatar>
       
       <div className="flex-1 relative">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{formatTimestamp(message.timestamp)}</span>
+          <span className="text-xs text-muted-foreground">
+            {formatTimestamp(message.timestamp)}
+          </span>
+          {isGPT4Mini && metadata?.useSearch && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <SearchIcon size={12} />
+              Web Search Enabled
+            </span>
+          )}
         </div>
         
-        <motion.div layout className="mt-1" initial={{
-        opacity: 0
-      }} animate={{
-        opacity: 1,
-        ...pulseAnimation
-      }} transition={{
-        duration: 0.2
-      }}>
+        <motion.div 
+          layout 
+          className="mt-1" 
+          initial={{ opacity: 0 }} 
+          animate={{
+            opacity: 1,
+            ...pulseAnimation
+          }} 
+          transition={{ 
+            duration: message.is_streaming ? 0.2 : 0,
+            ease: [0.2, 0, 0.2, 1]
+          }}
+        >
           <div className="p-3 rounded-lg relative group bg-transparent">
             <div className="whitespace-pre-wrap">
               {displayContent}
-              {showCursorBlink && 
+              {showStreamingIndicator && (
                 <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse-slow" />
-              }
-            </div>
-            
-            {/* action buttons shown on hover */}
-            <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-              <Tooltip title="Copy to clipboard">
-                <IconButton size="small" onClick={handleCopy} className="text-muted-foreground">
-                  <Copy size={16} />
-                </IconButton>
-              </Tooltip>
-              
-              {/* regenerate button - only visible on last message and when not streaming */}
-              {isLastMessage && !message.is_streaming && !isGenerating && (
-                <Tooltip title="Regenerate response">
-                  <IconButton size="small" onClick={handleRegenerate} className="text-muted-foreground">
-                    <RotateCcw size={16} />
-                  </IconButton>
-                </Tooltip>
               )}
-              
-              {/* disabled regenerate button when generating */}
-              {isLastMessage && !message.is_streaming && isGenerating && (
-                <Tooltip title="Cannot regenerate while generating">
-                  {/* wrap disabled button in span to fix mui tooltip issue */}
-                  <span>
-                    <IconButton 
-                      size="small" 
-                      disabled={true}
-                      className="text-muted-foreground opacity-50"
+            </div>
+
+            {/* Show agent results if present */}
+            {hasAgentResults && (
+              <div className="mt-2 text-sm text-muted-foreground">
+                {metadata.search && metadata.search.length > 0 && (
+                  <div className="mt-1">
+                    <strong>Search Results:</strong>
+                    <ul className="list-disc list-inside mt-1">
+                      {metadata.search.map((result: SearchResult, index: number) => (
+                        <li key={index} className="truncate">
+                          {result.title || result.content}
+                          {result.url && (
+                            <a 
+                              href={result.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="ml-1 text-primary hover:underline"
+                            >
+                              (source)
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {metadata.steps && metadata.steps.length > 0 && (
+                  <div className="mt-1">
+                    <strong>Steps:</strong>
+                    <ul className="list-decimal list-inside mt-1">
+                      {metadata.steps.map((step: string, index: number) => (
+                        <li key={index}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Action buttons */}
+            <div className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleCopy}
+                      className="h-8 w-8 text-muted-foreground hover:bg-muted/50"
                     >
-                      <RotateCcw size={16} />
-                    </IconButton>
-                  </span>
+                      {copySuccess ? <Check size={16} /> : <Copy size={16} />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Copy to clipboard</p>
+                  </TooltipContent>
                 </Tooltip>
+              </TooltipProvider>
+              
+              {isLastMessage && !message.is_streaming && !isGenerating && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleRegenerate}
+                        className="h-8 w-8 text-muted-foreground hover:bg-muted/50"
+                      >
+                        <RotateCcw size={16} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Regenerate response</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
             </div>
           </div>
         </motion.div>
       </div>
-      
-      {/* copy success notification */}
-      <Snackbar
-        open={copySuccess}
-        autoHideDuration={2000}
-        onClose={() => setCopySuccess(false)}
-        message="Copied to clipboard"
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      />
-    </div>;
+    </div>
+  );
 };
 
 export default BotMessage;
